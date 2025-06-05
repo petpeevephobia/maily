@@ -1,0 +1,11 @@
+__pycache__/
+*.py[cod]
+*.pyo
+.env
+config.json
+Dockerfile
+fly.toml
+*.log
+venv/
+__pycache__/
+*.egg-info/ 

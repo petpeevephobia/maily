@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Maily: Cold Email Assistant</title>
+  <style>
+    body { font-family: Arial, sans-serif; max-width: 800px; margin: auto; padding: 20px; }
+    h1 { color: #333; }
+    .info { background: #f9f9f9; border-left: 4px solid #007BFF; padding: 15px; margin-bottom: 20px; }
+    .error-message { color: #f00; margin-bottom: 10px; }
+    .input-error { border: 2px solid #f00; }
+    label { display: block; font-weight: bold; margin-top: 10px; }
+    input { width: 100%; padding: 8px; margin-top: 5px; box-sizing: border-box; }
+    button { margin-top: 15px; padding: 10px 20px; font-size: 16px; cursor: pointer; }
+    button.btn-secondary { background: none; border: 1px solid #000; color: #000; }
+    button.btn-primary { background: #000; border: none; color: #fff; }
+    a { color: #007BFF; text-decoration: none; }
+    a:hover { text-decoration: underline; }
+  </style>
+</head>
+<body>
+  <h1>Maily: Cold Email Assistant</h1>
+  <p>Coded with ❤️ for TNA.</p>
+  <div class="info">
+    <p>Maily automates the creation of personalized cold email drafts directly in your Notion CRM. It will:</p>
+    <ul>
+      <li>Crawl and audit the leads' websites for CRO opportunities.</li>
+      <li>Generate a custom email draft and store it back in Notion.</li>
+      <li>Skip any lead that already has a draft written.</li>
+    </ul>
+    <p><strong>To use:</strong></p>
+    <ol>
+      <li>Enter your Notion integration token (API key).</li>
+      <li>Enter the ID of the Notion database where your leads are stored.</li>
+      <li>Click <strong>Test Connection</strong> to verify setup.</li>
+      <li>Then click <strong>Generate emails</strong> to create and store drafts.</li>
+    </ol>
+    <p>If you enter an invalid Notion Database ID and you see a huge error page, go back to the previous page and try again.</p>
+    <p>If you need more guidance, see <a href="https://developers.notion.com/docs/getting-started" target="_blank">Notion API Docs</a>.</p>
+  </div>
+  <form method="post">
+    {% if error_message %}
+      <div class="error-message">{{ error_message }}</div>
+    {% endif %}
+    <label for="notion_api_key">Notion API Key:</label>
+    <input type="password" id="notion_api_key" name="notion_api_key" value="{{ config.get('notion_api_key', '') }}" required class="{% if error_field=='notion_api_key' %}input-error{% endif %}">
+    <details style="margin-top:8px; margin-bottom:16px;">
+      <summary style="cursor:pointer; color:#007BFF;">How to get your Notion API Key</summary>
+      <ol style="margin-top:8px; padding-left:20px; font-size:0.9em;">
+        <li>In Notion, go to <em>Settings &amp; Members</em> → <em>Integrations</em> and create an integration named <strong>Maily</strong> (if needed).</li>
+        <li>Copy the integration's <em>Internal Integration Token</em> and paste it above.</li>
+        <li>Open your CRM database page in Notion, click <strong>Share</strong> → <strong>Add connections</strong>.</li>
+        <li>Select <strong>Maily</strong> and click <strong>Invite</strong>.</li>
+        <li>Ensure <strong>Maily</strong> has at least <em>Can read</em> permission on the database.</li>
+      </ol>
+    </details>
+    <label for="notion_database_id">Notion Database ID:</label>
+    <input type="text" id="notion_database_id" name="notion_database_id" value="{{ config.get('notion_database_id', '') }}" required class="{% if error_field=='notion_database_id' %}input-error{% endif %}">
+    <details style="margin-top:8px; margin-bottom:16px;">
+      <summary style="cursor:pointer; color:#007BFF;">How to get your Notion Database ID</summary>
+      <ol style="margin-top:8px; padding-left:20px; font-size:0.9em;">
+        <li>Open your CRM page in Notion.</li>
+        <li>Click the <strong>Share</strong> button and select <strong>Copy link</strong>.</li>
+        <li>Paste the link somewhere; the database ID is the segment between the last slash <code>/</code> and the question mark <code>?</code>.</li>
+        <li>It looks like <code>xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx</code>. Copy that ID (including hyphens) and paste it above.</li>
+      </ol>
+    </details>
+    <label for="sender_email">Sender Email (Zoho):</label>
+    <input type="email" id="sender_email" name="sender_email" value="{{ config.get('sender_email', '') }}" required class="{% if error_field=='sender_email' %}input-error{% endif %}">
+    <label for="zoho_app_password">Zoho App Password:</label>
+    <input type="password" id="zoho_app_password" name="zoho_app_password" value="{{ config.get('zoho_app_password', '') }}" required class="{% if error_field=='zoho_app_password' %}input-error{% endif %}">
+    <details style="margin-top:8px; margin-bottom:16px;">
+      <summary style="cursor:pointer; color:#007BFF;">How to generate a Zoho App Password</summary>
+      <ol style="margin-top:8px; padding-left:20px; font-size:0.9em;">
+        <li>Log in to your Zoho Mail account.</li>
+        <li>Go to <strong>Settings</strong> (gear icon) → <strong>Mail Accounts</strong> → <strong>Security</strong>.</li>
+        <li>Under <em>App Passwords</em>, click <strong>Generate New Password</strong>.</li>
+        <li>Give it a name (e.g., "Maily Automation") and click <strong>Generate</strong>.</li>
+        <li>Copy the 16-character app password and paste it above.</li>
+      </ol>
+    </details>
+    <button type="submit" name="action" value="test" class="btn-secondary">Test Connection</button>
+    <button type="submit" name="action" value="run" class="btn-primary">Generate emails</button>
+  </form>
+  <div id="db-info" style="margin-top:20px;">
+    <h2>Connection Status</h2>
+    <ul>
+      <li><strong>Notion:</strong>
+        {% if db_title %}
+          Connected to "{{ db_title }}"
+        {% elif error_message %}
+          <span class="error-message">{{ error_message }}</span>
+        {% else %}
+          Not tested.
+        {% endif %}
+      </li>
+      <li><strong>Zoho SMTP:</strong>
+        {% if smtp_ok is defined and smtp_ok %}
+          Connected as {{ config['sender_email'] }}
+        {% elif smtp_error_message %}
+          <span class="error-message">{{ smtp_error_message }}</span>
+        {% else %}
+          Not tested.
+        {% endif %}
+      </li>
+    </ul>
+  </div>
+  <script>
+    // Show loading state when testing connection
+    document.querySelector('button[name="action"][value="test"]').addEventListener('click', function() {
+      var dbInfoDiv = document.getElementById('db-info');
+      dbInfoDiv.innerHTML = '<h2>Notion Database Info</h2><p>Loading...</p>';
+    });
+  </script>
+</body>
+</html> 
