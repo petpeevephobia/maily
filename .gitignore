@@ -42,4 +42,7 @@ ENV/
 # OAuth
 client_secrets.json
 credentials.json
-token.json 
+token.json
+config.json
+
+# ... existing code ... 
