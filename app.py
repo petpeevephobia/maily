@@ -25,6 +25,13 @@ def index():
     db_title = None
     error_message = None
     error_field = None
+    # Load default email template
+    default_email_template = ""
+    try:
+        with open('email_template.txt', 'r', encoding='utf-8') as f:
+            default_email_template = f.read()
+    except FileNotFoundError:
+        default_email_template = ""
     if request.method == 'POST':
         # Determine action: test connection or run automation
         action = request.form.get('action')
@@ -33,11 +40,22 @@ def index():
         notion_database_id = request.form.get('notion_database_id')
         sender_email = request.form.get('sender_email')
         zoho_app_password = request.form.get('zoho_app_password')
+        # Get optional OpenAI prompt overrides
+        analysis_prompt = request.form.get('analysis_prompt')
+        summary_prompt = request.form.get('summary_prompt')
+        # Get optional custom email template
+        email_template = request.form.get('email_template')
+        # Get optional limit on number of leads
+        lead_limit = request.form.get('lead_limit')
         config = {
             'notion_api_key': notion_api_key,
             'notion_database_id': notion_database_id,
             'sender_email': sender_email,
-            'zoho_app_password': zoho_app_password
+            'zoho_app_password': zoho_app_password,
+            'analysis_prompt': analysis_prompt,
+            'summary_prompt': summary_prompt,
+            'email_template': email_template,
+            'lead_limit': lead_limit
         }
         # Persist config
         with open(config_path, 'w') as f:
@@ -47,6 +65,14 @@ def index():
         os.environ['ZOHO_APP_PASSWORD'] = zoho_app_password
         # Initialize client with Notion credentials
         emailer = ColdEmailer(notion_api_key, notion_database_id)
+        # Apply prompt overrides to ColdEmailer instance
+        if analysis_prompt:
+            emailer.analysis_prompt_template = analysis_prompt
+        if summary_prompt:
+            emailer.summary_prompt_template = summary_prompt
+        # Apply custom email template if provided
+        if email_template:
+            emailer.email_template = email_template
         if action == 'test':
             # Test Notion connection
             try:
@@ -90,9 +116,17 @@ def index():
             return render_template('index.html', config=config, db_title=db_title,
                                    error_message=error_message, error_field=error_field,
                                    smtp_ok=smtp_ok, smtp_error_message=smtp_error_message,
-                                   smtp_error_field=smtp_error_field)
+                                   smtp_error_field=smtp_error_field,
+                                   default_email_template=default_email_template)
         # Else run the automation
         leads = emailer.get_leads_to_contact()
+        # Apply lead limit if provided
+        if lead_limit:
+            try:
+                limit_int = int(lead_limit)
+                leads = leads[:limit_int]
+            except ValueError:
+                pass
         results = []
         for lead in leads:
             # Skip if draft exists
@@ -108,7 +142,8 @@ def index():
         return render_template('results.html', results=results)
     # Render form (initial GET)
     return render_template('index.html', config=config, db_title=None,
-                           error_message=None, error_field=None)
+                           error_message=None, error_field=None,
+                           default_email_template=default_email_template)
 
 if __name__ == '__main__':
     port = int(os.getenv('PORT', 5000))

@@ -16,6 +16,8 @@
     button.btn-primary { background: #000; border: none; color: #fff; }
     a { color: #007BFF; text-decoration: none; }
     a:hover { text-decoration: underline; }
+    .hidden { display: none; }
+    .mt-2 { margin-top: 8px; }
   </style>
 </head>
 <body>
@@ -49,7 +51,7 @@
       <ol style="margin-top:8px; padding-left:20px; font-size:0.9em;">
         <li>In Notion, go to <em>Settings &amp; Members</em> → <em>Integrations</em> and create an integration named <strong>Maily</strong> (if needed).</li>
         <li>Copy the integration's <em>Internal Integration Token</em> and paste it above.</li>
-        <li>Open your CRM database page in Notion, click <strong>Share</strong> → <strong>Add connections</strong>.</li>
+        <li>Open your CRM database page in Notion <em>in full screen</em>, click <strong>Share</strong> → <strong>Add connections</strong>. This is important.</li>
         <li>Select <strong>Maily</strong> and click <strong>Invite</strong>.</li>
         <li>Ensure <strong>Maily</strong> has at least <em>Can read</em> permission on the database.</li>
       </ol>
@@ -79,6 +81,102 @@
         <li>Copy the 16-character app password and paste it above.</li>
       </ol>
     </details>
+    <!-- Analysis Prompt Selection -->
+    <label for="analysis_prompt_select">Analysis Prompt:</label>
+    <select id="analysis_prompt_select" name="analysis_prompt_select">
+      <option value="default" {% if not config.get('analysis_prompt') %}selected{% endif %}>Use Default Prompt</option>
+      <option value="custom" {% if config.get('analysis_prompt') %}selected{% endif %}>Custom Prompt</option>
+    </select>
+    <div id="analysis_prompt_default" class="mt-2 {% if config.get('analysis_prompt') %}hidden{% endif %}">
+      <textarea rows="6" readonly style="width:100%;">
+Analyze this website's HTML for exactly 3 major conversion rate optimization (CRO) flaws.
+For each flaw:
+1. Quote the problematic HTML code
+2. Explain why it's a problem
+3. Provide a specific percentage impact on conversion rate (be dramatic but realistic)
+4. Give the exact solution with code if applicable
+
+Format as JSON:
+{
+    "flaws": [
+        {
+            "code": "quoted HTML code",
+            "problem": "explanation",
+            "impact": "percentage and numbers",
+            "solution": "specific solution"
+        }
+    ]
+}
+
+Website HTML: {html_content}
+      </textarea>
+    </div>
+    <div id="analysis_prompt_custom" class="mt-2 {% if not config.get('analysis_prompt') %}hidden{% endif %}">
+      <!-- <label for="analysis_prompt">Custom Analysis Prompt:</label> -->
+      <textarea id="analysis_prompt" name="analysis_prompt" rows="6" style="width:100%;">{{ config.get('analysis_prompt', '') }}</textarea>
+    </div>
+
+    <!-- Summary Prompt Selection -->
+    <label for="summary_prompt_select">Summary Prompt:</label>
+    <select id="summary_prompt_select" name="summary_prompt_select">
+      <option value="default" {% if not config.get('summary_prompt') %}selected{% endif %}>Use Default Prompt</option>
+      <option value="custom" {% if config.get('summary_prompt') %}selected{% endif %}>Custom Prompt</option>
+    </select>
+    <div id="summary_prompt_default" class="mt-2 {% if config.get('summary_prompt') %}hidden{% endif %}">
+      <textarea rows="4" readonly style="width:100%;">
+Based on this CRO analysis, create a compelling 2-paragraph summary that will grab the reader's attention.
+Focus on the potential revenue/conversion impact. Use specific numbers and percentages.
+Make it persuasive but professional.
+
+Analysis: {analysis}
+      </textarea>
+    </div>
+    <div id="summary_prompt_custom" class="mt-2 {% if not config.get('summary_prompt') %}hidden{% endif %}">
+      <!-- <label for="summary_prompt">Custom Summary Prompt:</label> -->
+      <textarea id="summary_prompt" name="summary_prompt" rows="4" style="width:100%;">{{ config.get('summary_prompt', '') }}</textarea>
+    </div>
+
+    <!-- Email Template Selection -->
+    <label for="email_template_select">Email Template:</label>
+    <select id="email_template_select" name="email_template_select">
+      <option value="default" {% if not config.get('email_template') %}selected{% endif %}>Use Default Template</option>
+      <option value="custom" {% if config.get('email_template') %}selected{% endif %}>Custom Template</option>
+    </select>
+    <div id="email_template_default" class="mt-2 {% if config.get('email_template') %}hidden{% endif %}">
+      <textarea rows="10" readonly style="width:100%;">{{ default_email_template }}</textarea>
+      <small>Default template with placeholders: {name}, {company}, {industry}.</small>
+    </div>
+    <div id="email_template_custom" class="mt-2 {% if not config.get('email_template') %}hidden{% endif %}">
+      <!-- <label for="email_template">Custom Email Template:</label> -->
+      <textarea id="email_template" name="email_template" rows="10" style="width:100%;">{{ config.get('email_template', '') }}</textarea>
+      <small>Add any needed placeholders like {name}, {company}, {industry} exactly as shown above.</small>
+    </div>
+
+    <!-- Toggle script for prompt selection -->
+    <script>
+      function togglePrompt(selectId, defId, custId) {
+        const sel = document.getElementById(selectId);
+        const def = document.getElementById(defId);
+        const cust = document.getElementById(custId);
+        sel.addEventListener('change', function() {
+          if (this.value === 'default') {
+            def.classList.remove('hidden');
+            cust.classList.add('hidden');
+          } else {
+            def.classList.add('hidden');
+            cust.classList.remove('hidden');
+          }
+        });
+      }
+      togglePrompt('analysis_prompt_select', 'analysis_prompt_default', 'analysis_prompt_custom');
+      togglePrompt('summary_prompt_select', 'summary_prompt_default', 'summary_prompt_custom');
+      togglePrompt('email_template_select', 'email_template_default', 'email_template_custom');
+    </script>
+
+    <label for="lead_limit">Number of leads to process:</label>
+    <input type="number" id="lead_limit" name="lead_limit" min="1" value="{{ config.get('lead_limit', '') }}" class="mt-2" />
+    <small>Leave blank to process all available leads.</small>
+
     <button type="submit" name="action" value="test" class="btn-secondary">Test Connection</button>
     <button type="submit" name="action" value="run" class="btn-primary">Generate emails</button>
   </form>

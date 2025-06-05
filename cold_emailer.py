@@ -186,6 +186,9 @@ Format as JSON:
 }}
 
 Website HTML: {html_content[:10000]}"""  # First 10K chars to stay within token limits
+            # Override analysis prompt if user provided a custom template
+            if getattr(self, 'analysis_prompt_template', None):
+                analysis_prompt = self.analysis_prompt_template.replace("{html_content}", html_content[:10000])
 
             response = openai.ChatCompletion.create(
                 model="gpt-4o-mini",
@@ -201,6 +204,10 @@ Focus on the potential revenue/conversion impact. Use specific numbers and perce
 Make it persuasive but professional.
 
 Analysis: {analysis}"""
+
+            # Override summary prompt if user provided a custom template
+            if getattr(self, 'summary_prompt_template', None):
+                summary_prompt = self.summary_prompt_template.replace("{analysis}", analysis)
 
             summary_response = openai.ChatCompletion.create(
                 model="gpt-4o-mini",
