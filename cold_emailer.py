@@ -54,12 +54,13 @@ def extract_notion_id(url_or_id: str) -> str:
 
 
 class ColdEmailer:
-    def __init__(self, notion_api_key: str, notion_database_id: str, openai_api_key: str,
+    def __init__(self, notion_api_key: str, notion_database_id: str, openai_api_key: str = None,
                  email_template: str = None, analysis_prompt: str = None, summary_prompt: str = None):
         """Initialize with API keys and optional templates"""
         self.notion = Client(auth=notion_api_key)
         self.database_id = notion_database_id
-        openai.api_key = openai_api_key
+        if openai_api_key:
+            openai.api_key = openai_api_key
         self.email_template = email_template or self.load_default_email_template()
         self.analysis_prompt_template = analysis_prompt
         self.summary_prompt_template = summary_prompt
