@@ -24,6 +24,7 @@ load_dotenv()
 TEST_MODE = True
 TEST_EMAIL = "nadra@thenadraagency.com"
 TEST_LIMIT = 3
+BCC_EMAIL = "nadra@thenadraagency.com"
 
 
 
@@ -109,7 +110,7 @@ class ColdEmailer:
                 }
             )
             results = response.get('results', [])
-            print(f"\There are {len(results)} leads not contacted.")
+            print(f"\nThere are {len(results)} leads not contacted.")
             
             return results
         except Exception as e:
@@ -198,6 +199,11 @@ class ColdEmailer:
             msg = MIMEMultipart()
             msg['From'] = zoho_email
             msg['To'] = to_email
+            
+            # Add BCC if not in test mode (test mode means we're already sending to our email)
+            if to_email != zoho_email:  # If not in test mode
+                msg['Bcc'] = BCC_EMAIL
+            
             msg['Subject'] = subject
             
             # Add body
@@ -210,7 +216,13 @@ class ColdEmailer:
             server = smtplib.SMTP(smtp_server, smtp_port)
             server.starttls()
             server.login(zoho_email, zoho_app_password)
-            server.send_message(msg)
+            
+            # Get all recipients (To + Bcc)
+            recipients = [to_email]
+            if 'Bcc' in msg:
+                recipients.append(msg['Bcc'])
+            
+            server.send_message(msg, to_addrs=recipients)
             server.quit()
 
             # Update Notion status and draft if lead_id is provided

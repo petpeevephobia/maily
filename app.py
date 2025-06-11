@@ -13,15 +13,9 @@ default_email_template = ""
 try:
     with open('email_template.txt', 'r', encoding='utf-8') as f:
         default_email_template = f.read()
-except FileNotFoundError:
-    default_email_template = """Hi {name},
-
-I hope this email finds you well. I came across {company} and was particularly impressed by your work in the {industry} industry.
-
-I'm reaching out because I believe we could potentially collaborate on some interesting projects. Would you be open to a brief conversation about how we might work together?
-
-Best regards,
-[Your Name]"""
+except Exception as e:
+    print(f"Error loading email template: {str(e)}")
+    default_email_template = "Hey {name},\n\nI hope this email finds you well. I noticed you're at {company} and thought you might be interested in our services.\n\nBest regards,\nNadra"
 
 @app.route('/')
 def index():
@@ -44,7 +38,7 @@ def handle_post():
     notion_database_id = request.form.get('notion_database_id')
     zoho_email = request.form.get('zoho_email')
     zoho_app_password = request.form.get('zoho_app_password')
-    email_template = request.form.get('email_template')
+    email_template = request.form.get('email_template', default_email_template)
     email_subject = request.form.get('email_subject', '{name}, you don\'t want to miss this')
     lead_limit = request.form.get('lead_limit')
     test_mode = 'test_mode' in request.form  # Check if checkbox is checked

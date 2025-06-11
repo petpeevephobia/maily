@@ -1,12 +1,15 @@
 Hey {name},
 
-You’re busy at {company} so I’ll make this quick: we help Seed and Series A startups transform their websites to actually convert.
+You’re busy at {company} so I’ll make this quick.
 
-Our secret sauce: Solvia.
+We help overworked founders reclaim 10 hours per week. Our secret sauce: High-converting web design and AI-powered SEO.
 
 We recently helped Seartify, a maritime SaaS company, get on track to 2x their user signups in 30 days.
 
-Right now, we’re offering 50% off high-converting web design & development, and free access to Solvia, our AI web manager that keeps your SEO optimised every month.
+Right now, we’re offering:
+
+- 50% off your web design quote.
+- Free alpha access to Solvia, web management on AI autopilot.
 
 Only the first 3 founders who book a call with me will get this sweet deal.
 
