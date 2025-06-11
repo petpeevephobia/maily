@@ -5,6 +5,7 @@ import requests
 import re
 import json
 from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
 from datetime import datetime
 from typing import List, Dict, Any, Tuple
 from bs4 import BeautifulSoup
@@ -55,7 +56,8 @@ def extract_notion_id(url_or_id: str) -> str:
 
 class ColdEmailer:
     def __init__(self, notion_api_key: str, notion_database_id: str, openai_api_key: str = None,
-                 email_template: str = None, analysis_prompt: str = None, summary_prompt: str = None):
+                 email_template: str = None, analysis_prompt: str = None, summary_prompt: str = None,
+                 email_subject: str = '{name}, you don\'t want to miss this'):
         """Initialize with API keys and optional templates"""
         self.notion = Client(auth=notion_api_key)
         self.database_id = notion_database_id
@@ -64,6 +66,7 @@ class ColdEmailer:
         self.email_template = email_template or self.load_default_email_template()
         self.analysis_prompt_template = analysis_prompt
         self.summary_prompt_template = summary_prompt
+        self.email_subject = email_subject
 
     def load_default_email_template(self) -> str:
         """Load default email template from file"""
@@ -73,93 +76,169 @@ class ColdEmailer:
         except FileNotFoundError:
             return ""
 
-    @retry(tries=3, delay=2)
-    def get_leads_to_contact(self) -> List[Dict[str, Any]]:
-        """Get leads from Notion that haven't been contacted yet"""
+    def get_leads_to_contact(self) -> list:
+        """Get leads from Notion database that need to be contacted"""
         try:
-            # Query Notion database for leads without a draft
+            print("Querying Notion database...")
+
+            
+            # Query the database for leads
             response = self.notion.databases.query(
                 database_id=self.database_id,
                 filter={
                     "and": [
                         {
+                            "property": "Status",
+                            "status": {
+                                "equals": "Not contacted"
+                            }
+                        },
+                        {
                             "property": "Cold email draft",
                             "rich_text": {
                                 "is_empty": True
+                            }
+                        },
+                        {
+                            "property": "Email",
+                            "email": {
+                                "is_not_empty": True
                             }
                         }
                     ]
                 }
             )
-            return response.get("results", [])
+            results = response.get('results', [])
+            print(f"\There are {len(results)} leads not contacted.")
+            
+            return results
         except Exception as e:
-            print(f"Error fetching leads: {e}")
+            print(f"Error getting leads: {str(e)}")
             return []
 
-    @retry(tries=3, delay=2)
-    def generate_email_draft(self, lead: Dict[str, Any]) -> str:
-        """Generate personalized email draft based on lead information"""
-        # Extract lead information
-        name = lead["properties"].get("Name", {}).get("title", [{}])[0].get("text", {}).get("content", "")
-        company = lead["properties"].get("Organisation", {}).get("rich_text", [{}])[0].get("text", {}).get("content", "")
-        # Log which lead we're generating a draft for
-        print(f"\nGenerating email draft for {name} at {company}")
-        # Extract first name only
-        first_name = name.split()[0] if name else ""
-        industry = lead["properties"].get("Industry", {}).get("rich_text", [{}])[0].get("text", {}).get("content", "")
-        
-        # Format template with lead information
+
+    def generate_email_draft(self, lead: dict) -> dict:
+        """Generate email draft for a lead"""
         try:
-            email_draft = self.email_template.format(
+            # Get lead details
+            name = lead.get('properties', {}).get('Name', {}).get('title', [{}])[0].get('text', {}).get('content', '')
+            email = lead.get('properties', {}).get('Email', {}).get('email', '')
+            company = lead.get('properties', {}).get('Organisation', {}).get('rich_text', [{}])[0].get('text', {}).get('content', '')
+            
+            # Get first name only
+            first_name = name.split()[0] if name else ''
+            
+            # Generate email content
+            content = self.email_template.format(
                 name=first_name,
-                company=company,
-                industry=industry
+                company=company
             )
             
-        except KeyError as e:
-            print(f"Warning: Template placeholder {e} not found in data. Using empty string.")
-            email_draft = self.email_template.format(
-                name=first_name or "",
-                company=company or "",
-                industry=industry or ""
+            # Generate subject
+            subject = self.email_subject.format(
+                name=first_name,
+                company=company
             )
-        
-        return email_draft
-
-    @retry(tries=3, delay=2)
-    def update_notion_with_draft(self, page_id: str, draft: str) -> None:
-        """Update Notion page with generated email draft"""
-        try:
-            self.notion.pages.update(
-                page_id=page_id,
-                properties={
-                    "Cold email draft": {
-                        "rich_text": [
-                            {
-                                "text": {
-                                    "content": draft
-                                }
-                            }
-                        ]
-                    }
-                }
-            )
+            
+            return {
+                'to_name': name,
+                'to_email': email,
+                'company': company,
+                'subject': subject,
+                'content': content
+            }
         except Exception as e:
-            print(f"Error updating Notion: {e}")
+            print(f"Error generating email draft: {str(e)}")
+            return None
 
-    def setup_smtp_settings(self):
-        """Setup SMTP settings for Zoho Mail"""
-        print("Configuring SMTP settings...")
-        self.smtp_settings = {
-            'host': os.getenv('SMTP_HOST', 'smtp.zoho.com'),
-            'port': int(os.getenv('SMTP_PORT', '587')),
-            'username': os.getenv('SENDER_EMAIL'),
-            'password': os.getenv('ZOHO_APP_PASSWORD'),
-        }
-        
+    def test_smtp_connection(self) -> bool:
+        """Test SMTP connection and send a test email"""
+        try:
+            # Get Zoho credentials
+            zoho_email = os.getenv('ZOHO_EMAIL')
+            zoho_app_password = os.getenv('ZOHO_APP_PASSWORD')
+            
+            if not zoho_email or not zoho_app_password:
+                raise Exception("Missing Zoho email configuration")
+            
+            # Create test message
+            msg = MIMEMultipart()
+            msg['From'] = zoho_email
+            msg['To'] = zoho_email  # Send to self
+            msg['Subject'] = "Test Email from Maily"
+            
+            # Add body
+            msg.attach(MIMEText("This is a test email from Maily to verify SMTP connection.", 'plain'))
+            
+            # Create SMTP connection
+            smtp_server = "smtp.zoho.com"
+            smtp_port = 587
+            
+            server = smtplib.SMTP(smtp_server, smtp_port)
+            server.starttls()
+            server.login(zoho_email, zoho_app_password)
+            server.send_message(msg)
+            server.quit()
+            return True
+        except Exception as e:
+            print(f"\nSMTP Test Error: {str(e)}")
+            return False
 
+    def send_email(self, to_email: str, subject: str, content: str, lead_id: str = None) -> bool:
+        """Send email using Zoho SMTP and update Notion status if successful"""
+        try:
+            # Get Zoho credentials from environment variables
+            zoho_email = os.getenv('ZOHO_EMAIL')
+            zoho_app_password = os.getenv('ZOHO_APP_PASSWORD')
+            
+            if not zoho_email or not zoho_app_password:
+                raise Exception("Missing Zoho email configuration. Please set ZOHO_EMAIL and ZOHO_APP_PASSWORD environment variables.")
+            
+            # Create message
+            msg = MIMEMultipart()
+            msg['From'] = zoho_email
+            msg['To'] = to_email
+            msg['Subject'] = subject
+            
+            # Add body
+            msg.attach(MIMEText(content, 'plain'))
+            
+            # Create SMTP connection
+            smtp_server = "smtp.zoho.com"
+            smtp_port = 587
+            
+            server = smtplib.SMTP(smtp_server, smtp_port)
+            server.starttls()
+            server.login(zoho_email, zoho_app_password)
+            server.send_message(msg)
+            server.quit()
 
-
+            # Update Notion status and draft if lead_id is provided
+            if lead_id:
+                self.notion.pages.update(
+                    page_id=lead_id,
+                    properties={
+                        "Status": {
+                            "status": {
+                                "name": "Attempted contact"
+                            }
+                        },
+                        "Cold email draft": {
+                            "rich_text": [
+                                {
+                                    "text": {
+                                        "content": f"Subject: {subject}\n\n{content}"
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                )
+            
+            return True
+        except Exception as e:
+            print(f"\nError sending email: {str(e)}")
+            return False
 
     def run(self):
         """Main execution flow"""
@@ -187,26 +266,23 @@ class ColdEmailer:
                 # Generate draft
                 draft = self.generate_email_draft(lead)
                 
-                # Update Notion with draft
-                self.update_notion_with_draft(lead["id"], draft)
-                
                 # Get email address
                 email = lead["properties"].get("Email", {}).get("email", "")
                 if not email and not TEST_MODE:
                     print(f"No email found for lead {lead['id']}")
                     continue
                 
-                # Email sending disabled in draft-only mode
-                # sent = self.send_email(
-                #     to_email=email or "no-email@example.com",
-                #     subject="Would love to connect",
-                #     body=draft
-                # )
-                # Logging disabled when email sending is turned off
-                # if sent:
-                #     print("Email sending skipped in test mode.")
-                # else:
-                #     print("Email sending skipped in test mode.")
+                # Send email
+                sent = self.send_email(
+                    to_email=email,
+                    subject="Would love to connect",
+                    content=draft['content'],
+                    lead_id=lead['id']
+                )
+                if sent:
+                    print(f"Email sent to {email}")
+                else:
+                    print(f"Email sending failed for {email}")
 
             except Exception as e:
                 print(f"Error processing lead {lead['id']}: {e}")
@@ -237,3 +313,50 @@ To switch to production mode:
    - Process all leads from Notion
    - Respect the MAX_EMAILS_PER_DAY from .env
 """ 
+
+def run(notion_api_key: str, notion_database_id: str, sender_email: str, email_template: str, email_subject: str = '{name}, you don\'t want to miss this', lead_limit: int = 10) -> list:
+    """Run the cold emailer"""
+    try:
+        # Initialize the cold emailer
+        emailer = ColdEmailer(
+            notion_api_key=notion_api_key,
+            notion_database_id=notion_database_id,
+            email_template=email_template,
+            email_subject=email_subject
+        )
+        
+        # Get leads to be processed
+        leads = emailer.get_leads_to_contact()
+        results = []
+        
+        # Process leads up to the limit
+        for lead in leads[:lead_limit]:
+            try:
+                # Generate draft
+                draft = emailer.generate_email_draft(lead)
+                if draft:
+                    # Send email
+                    sent = emailer.send_email(
+                        to_email=draft['to_email'],
+                        subject=draft['subject'],
+                        content=draft['content'],
+                        lead_id=lead['id']
+                    )
+                    results.append({
+                        'name': draft['to_name'],
+                        'email': draft['to_email'],
+                        'company': draft['company'],
+                        'status': 'Sent' if sent else 'Failed'
+                    })
+            except Exception as e:
+                results.append({
+                    'name': 'Error',
+                    'email': str(e),
+                    'company': 'N/A',
+                    'status': 'Error'
+                })
+        
+        return results
+    except Exception as e:
+        print(f"Error running cold emailer: {str(e)}")
+        return [] 

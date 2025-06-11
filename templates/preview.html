@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Preview Emails - Maily</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        .email-preview {
+            background-color: #f8f9fa;
+            border: 1px solid #dee2e6;
+            border-radius: 0.5rem;
+            padding: 1rem;
+            margin-top: 1rem;
+            font-family: Arial, sans-serif;
+        }
+        .email-header {
+            color: #6c757d;
+            font-size: 0.875rem;
+            margin-bottom: 1rem;
+        }
+        .email-content {
+            white-space: pre-wrap;
+            line-height: 1.5;
+        }
+    </style>
+</head>
+<body class="bg-light">
+    <div class="container py-5">
+        <div class="row justify-content-center">
+            <div class="col-md-8">
+                <div class="card shadow-sm">
+                    <div class="card-header">
+                        <h5 class="mb-0">Preview Emails to be Sent</h5>
+                        {% if config.test_mode %}
+                        <div class="alert alert-warning mt-2 mb-0">
+                            <strong>Test Mode Active:</strong> Emails will be sent to your Zoho email ({{ config.zoho_email }}) instead of the leads' emails.
+                        </div>
+                        {% endif %}
+                    </div>
+                    <div class="card-body">
+                        <div class="alert alert-info">
+                            The following {{ leads|length }} leads will receive emails. Please review before proceeding.
+                        </div>
+                        
+                        {% for lead in leads %}
+                        <div class="card mb-4">
+                            <div class="card-header">
+                                <h6 class="mb-0">{{ lead.name }} - {{ lead.company }}</h6>
+                                <small class="text-muted">
+                                    {% if lead.is_test %}
+                                    <span class="text-warning">Test Mode:</span> 
+                                    {% endif %}
+                                    {{ lead.email }}
+                                </small>
+                            </div>
+                            <div class="card-body">
+                                <div class="email-preview">
+                                    <div class="email-header">
+                                        <div>From: {{ config.zoho_email }}</div>
+                                        <div>To: {{ lead.email }}</div>
+                                        <div>Subject: {{ lead.subject }}</div>
+                                    </div>
+                                    <div class="email-content">
+                                        {{ lead.content | safe }}
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        {% endfor %}
+
+                        <form method="post" action="/">
+                            <input type="hidden" name="action" value="run">
+                            <input type="hidden" name="notion_api_key" value="{{ config.notion_api_key }}">
+                            <input type="hidden" name="notion_database_id" value="{{ config.notion_database_id }}">
+                            <input type="hidden" name="zoho_email" value="{{ config.zoho_email }}">
+                            <input type="hidden" name="zoho_app_password" value="{{ config.zoho_app_password }}">
+                            <input type="hidden" name="email_template" value="{{ config.email_template }}">
+                            <input type="hidden" name="email_subject" value="{{ config.email_subject }}">
+                            <input type="hidden" name="lead_limit" value="{{ config.lead_limit }}">
+                            {% if config.test_mode %}
+                            <input type="hidden" name="test_mode" value="on">
+                            {% endif %}
+                            
+                            <div class="d-flex gap-3">
+                                <button type="submit" class="btn btn-success" style="flex: 1;">
+                                    Confirm and Send Emails
+                                </button>
+                                <a href="/" class="btn btn-outline-secondary" style="flex: 1;">
+                                    Cancel
+                                </a>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</body>
+</html> 
