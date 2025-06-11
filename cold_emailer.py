@@ -54,189 +54,46 @@ def extract_notion_id(url_or_id: str) -> str:
 
 
 class ColdEmailer:
-    def __init__(self, notion_api_key: str = None, notion_database_id: str = None):
-        print("Initializing ColdEmailer...")
-        # Use passed API key or fallback to environment variable
-        notion_api_key = notion_api_key or os.getenv("NOTION_API_KEY")
-        
-        # Load and validate database ID from parameters or environment
-        self.database_id = notion_database_id or os.getenv("NOTION_DATABASE_ID")
-        if not notion_api_key or not self.database_id:
-            raise ValueError("Missing required parameters: NOTION_API_KEY and NOTION_DATABASE_ID must be set")
-        print(f"Using database ID: {self.database_id}")
-        
+    def __init__(self, notion_api_key: str, notion_database_id: str, openai_api_key: str,
+                 email_template: str = None, analysis_prompt: str = None, summary_prompt: str = None):
+        """Initialize with API keys and optional templates"""
         self.notion = Client(auth=notion_api_key)
-        
-        # Verify database access
+        self.database_id = notion_database_id
+        openai.api_key = openai_api_key
+        self.email_template = email_template or self.load_default_email_template()
+        self.analysis_prompt_template = analysis_prompt
+        self.summary_prompt_template = summary_prompt
+
+    def load_default_email_template(self) -> str:
+        """Load default email template from file"""
         try:
-            db_info = self.notion.databases.retrieve(self.database_id)
-            print("✅ Successfully connected to Notion database")
-            print(f"Database title: {db_info['title'][0]['plain_text'] if db_info.get('title') else 'Untitled'}")
-        except Exception as e:
-            print(f"❌ Error connecting to database: {e}")
-            raise
-            
-        self.load_email_template()
-        self.setup_smtp_settings()
-        openai.api_key = os.getenv("OPENAI_API_KEY")
-        
-
-
-
-
-    def setup_smtp_settings(self):
-        """Setup SMTP settings for Zoho Mail"""
-        print("Configuring SMTP settings...")
-        self.smtp_settings = {
-            'host': os.getenv('SMTP_HOST', 'smtp.zoho.com'),
-            'port': int(os.getenv('SMTP_PORT', '587')),
-            'username': os.getenv('SENDER_EMAIL'),
-            'password': os.getenv('ZOHO_APP_PASSWORD'),
-        }
-        
-
-
-
-
-    def load_email_template(self):
-        """Load email template from file"""
-        print("Loading email template...")
-        try:
-            with open('email_template.txt', 'r', encoding='utf-8') as file:
-                self.email_template = file.read()
+            with open('email_template.txt', 'r', encoding='utf-8') as f:
+                return f.read()
         except FileNotFoundError:
-            print("Warning: email_template.txt not found. Using default template.")
-            self.email_template = """Hey {name},
-
-I noticed your work at {company} in the {industry} industry and I'm impressed with what you're doing.
-
-Would you be open to a brief conversation about how we might be able to help?
-
-Best regards,
-Nadra
-Co-founder at The Nadra Agency
-thenadraagency.com"""
-
-
-
-
-
-    def get_leads_to_contact(self) -> List[Dict[str, Any]]:
-        """Get leads from Notion database that haven't been contacted yet"""
-        print("Fetching leads to contact from Notion...")
-        response = self.notion.databases.query(
-            database_id=self.database_id,
-            filter={
-                "and": [
-                    {
-                        "property": "Status",
-                        "status": {
-                            "equals": "Not contacted"
-                        }
-                    },
-                    {
-                        "property": "Cold email draft",
-                        "rich_text": {
-                            "is_empty": True
-                        }
-                    }
-                ]
-            },
-            page_size=30
-        )
-        
-        return response["results"][:TEST_LIMIT] if TEST_MODE else response["results"]
-
-
-
-
+            return ""
 
     @retry(tries=3, delay=2)
-    def analyze_website(self, url: str) -> Tuple[str, List[Dict[str, str]]]:
-        """Analyze website for CRO improvements"""
-        print(f"Analyzing website: {url}")
+    def get_leads_to_contact(self) -> List[Dict[str, Any]]:
+        """Get leads from Notion that haven't been contacted yet"""
         try:
-            # Fetch website content
-            headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
-            response = requests.get(url, headers=headers, timeout=10)
-            response.raise_for_status()
-            
-            # Parse HTML
-            soup = BeautifulSoup(response.text, 'html5lib')
-            html_content = str(soup)
-            
-            # Analyze with OpenAI
-            analysis_prompt = f"""Analyze this website's HTML for exactly 3 major conversion rate optimization (CRO) flaws.
-For each flaw:
-1. Quote the problematic HTML code
-2. Explain why it's a problem
-3. Provide a specific percentage impact on conversion rate (be dramatic but realistic)
-4. Give the exact solution with code if applicable
-
-Format as JSON:
-{{
-    "flaws": [
-        {{
-            "code": "quoted HTML code",
-            "problem": "explanation",
-            "impact": "percentage and numbers",
-            "solution": "specific solution"
-        }}
-    ]
-}}
-
-Website HTML: {html_content[:10000]}"""  # First 10K chars to stay within token limits
-            # Override analysis prompt if user provided a custom template
-            if getattr(self, 'analysis_prompt_template', None):
-                analysis_prompt = self.analysis_prompt_template.replace("{html_content}", html_content[:10000])
-
-            response = openai.ChatCompletion.create(
-                model="gpt-4o-mini",
-                messages=[{"role": "user", "content": analysis_prompt}],
-                temperature=0.7
+            # Query Notion database for leads without a draft
+            response = self.notion.databases.query(
+                database_id=self.database_id,
+                filter={
+                    "and": [
+                        {
+                            "property": "Cold email draft",
+                            "rich_text": {
+                                "is_empty": True
+                            }
+                        }
+                    ]
+                }
             )
-            
-            analysis = response.choices[0].message.content
-            
-            # Generate summary
-            summary_prompt = f"""Based on this CRO analysis, create a compelling 2-paragraph summary that will grab the reader's attention.
-Focus on the potential revenue/conversion impact. Use specific numbers and percentages.
-Make it persuasive but professional.
-
-Analysis: {analysis}"""
-
-            # Override summary prompt if user provided a custom template
-            if getattr(self, 'summary_prompt_template', None):
-                summary_prompt = self.summary_prompt_template.replace("{analysis}", analysis)
-
-            summary_response = openai.ChatCompletion.create(
-                model="gpt-4o-mini",
-                messages=[{"role": "user", "content": summary_prompt}],
-                temperature=0.7
-            )
-            
-            summary = summary_response.choices[0].message.content
-            
-            # Parse analysis JSON safely
-            try:
-                analysis_data = json.loads(analysis)
-            except json.JSONDecodeError:
-                # Fallback: extract JSON object from string
-                start = analysis.find('{')
-                end = analysis.rfind('}')
-                if start != -1 and end != -1:
-                    analysis_data = json.loads(analysis[start:end+1])
-                else:
-                    raise
-            return summary, analysis_data.get("flaws", [])
-            
+            return response.get("results", [])
         except Exception as e:
-            print(f"\nError analyzing website: {e}")
-            return "", []
-
-
-
-
+            print(f"Error fetching leads: {e}")
+            return []
 
     @retry(tries=3, delay=2)
     def generate_email_draft(self, lead: Dict[str, Any]) -> str:
@@ -249,17 +106,6 @@ Analysis: {analysis}"""
         # Extract first name only
         first_name = name.split()[0] if name else ""
         industry = lead["properties"].get("Industry", {}).get("rich_text", [{}])[0].get("text", {}).get("content", "")
-        website = lead["properties"].get("Website", {}).get("url", "")
-        
-        # Get website analysis if URL is available
-        cro_summary = ""
-        if website:
-            try:
-                summary, flaws = self.analyze_website(website)
-                if summary and flaws:
-                    cro_summary = f"Based on our analysis of your website, we've identified several opportunities for improvement:\n\n{summary}\n"
-            except Exception as e:
-                print(f"Error in website analysis: {e}")
         
         # Format template with lead information
         try:
@@ -269,13 +115,6 @@ Analysis: {analysis}"""
                 industry=industry
             )
             
-            # Add CRO summary if available
-            if cro_summary:
-                email_draft = email_draft.replace(
-                    "Would you be open to a brief conversation about how we might be able to help?",
-                    f"{cro_summary}\nWould you be open to a brief conversation about implementing these improvements?"
-                )
-            
         except KeyError as e:
             print(f"Warning: Template placeholder {e} not found in data. Using empty string.")
             email_draft = self.email_template.format(
@@ -284,66 +123,39 @@ Analysis: {analysis}"""
                 industry=industry or ""
             )
         
-        # Normalize multiple blank lines to exactly one blank line (two newlines)
-        email_draft = re.sub(r"\n{3,}", "\n\n", email_draft)
         return email_draft
 
-
-
-
-
     @retry(tries=3, delay=2)
-    def update_notion_with_draft(self, page_id: str, draft: str):
-        """Update Notion page with the email draft"""
-        print("Updating Notion with email draft...")
-        # Only update the Cold email draft; leave Status unchanged
-        self.notion.pages.update(
-            page_id=page_id,
-            properties={
-                "Cold email draft": {
-                    "rich_text": [{
-                        "text": {
-                            "content": draft
-                        }
-                    }]
-                }
-            }
-        )
-
-
-
-
-
-    @retry(tries=3, delay=2)
-    def send_email(self, to_email: str, subject: str, body: str) -> bool:
-        """Send email using Zoho Mail SMTP"""
-        print(f"send_email called for: {to_email} (mode: {'TEST' if TEST_MODE else 'PRODUCTION'})")
-        message = MIMEText(body)
-        # In test mode, override recipient
-        if TEST_MODE:
-            subject = f"[TEST] Would have sent to: {to_email} - {subject}"
-            # Always send to TEST_EMAIL only
-            actual_recipients = [TEST_EMAIL]
-        else:
-            actual_recipients = [to_email]
-        
-        # Set the displayed To header to the actual recipients
-        message['To'] = TEST_EMAIL if TEST_MODE else to_email
-        message['From'] = os.getenv('SENDER_EMAIL')
-        message['Reply-To'] = os.getenv('REPLY_TO_EMAIL')
-        message['Subject'] = subject
-
+    def update_notion_with_draft(self, page_id: str, draft: str) -> None:
+        """Update Notion page with generated email draft"""
         try:
-            with smtplib.SMTP(self.smtp_settings['host'], self.smtp_settings['port']) as server:
-                server.starttls()
-                server.login(self.smtp_settings['username'], self.smtp_settings['password'])
-                # Explicitly send to the intended recipients
-                server.send_message(message, from_addr=self.smtp_settings['username'], to_addrs=actual_recipients)
-            return True
+            self.notion.pages.update(
+                page_id=page_id,
+                properties={
+                    "Cold email draft": {
+                        "rich_text": [
+                            {
+                                "text": {
+                                    "content": draft
+                                }
+                            }
+                        ]
+                    }
+                }
+            )
         except Exception as e:
-            print(f"\nError sending email: {e}")
-            return False
+            print(f"Error updating Notion: {e}")
 
+    def setup_smtp_settings(self):
+        """Setup SMTP settings for Zoho Mail"""
+        print("Configuring SMTP settings...")
+        self.smtp_settings = {
+            'host': os.getenv('SMTP_HOST', 'smtp.zoho.com'),
+            'port': int(os.getenv('SMTP_PORT', '587')),
+            'username': os.getenv('SENDER_EMAIL'),
+            'password': os.getenv('ZOHO_APP_PASSWORD'),
+        }
+        
 
 
 
