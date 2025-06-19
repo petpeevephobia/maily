@@ -225,8 +225,9 @@ class ColdEmailer:
             server.send_message(msg, to_addrs=recipients)
             server.quit()
 
-            # Update Notion status and draft if lead_id is provided
+            # Update Notion status, draft, and contacted date if lead_id is provided
             if lead_id:
+                current_date = datetime.now().isoformat()
                 self.notion.pages.update(
                     page_id=lead_id,
                     properties={
@@ -243,6 +244,11 @@ class ColdEmailer:
                                     }
                                 }
                             ]
+                        },
+                        "Contacted Date": {
+                            "date": {
+                                "start": current_date
+                            }
                         }
                     }
                 )
