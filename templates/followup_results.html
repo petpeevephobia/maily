@@ -4,9 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Follow-Up Email Results - Maily</title>
-    <!-- Bootstrap CSS -->
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
-    <!-- Custom styles -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
     <style>
         body {
             background-color: #f8f9fa;
@@ -14,139 +12,93 @@
         .card {
             box-shadow: 0 2px 4px rgba(0,0,0,.05);
         }
-        .email-content {
-            white-space: pre-wrap;
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-        }
-        @media print {
-            .btn, .alert {
-                display: none !important;
-            }
-            .table {
-                font-size: 12px;
-            }
-        }
-        
-        pre {
-            white-space: pre-wrap;
-            word-wrap: break-word;
-            background-color: #f8f9fa;
-            padding: 15px;
-            border-radius: 5px;
-            border: 1px solid #dee2e6;
-        }
     </style>
 </head>
-<body>
-    <!-- Main Content -->
-    <main>
-        <div class="container py-5">
-            <div class="row justify-content-center">
-                <div class="col-md-10">
-                    <div class="card shadow-sm">
-                        <div class="card-header">
-                            <h5 class="mb-0">Follow-Up Email Generation Results</h5>
+<body class="bg-light">
+    <div class="container py-5">
+        <div class="row justify-content-center">
+            <div class="col-md-8">
+                <div class="card shadow-sm">
+                    <div class="card-header">
+                        <h5 class="mb-0">Follow-Up Email Results</h5>
+                        {% if results and results[0].is_test %}
+                        <div class="alert alert-warning mt-2 mb-0">
+                            <strong>Test Mode Active:</strong> Follow-up emails were sent to your Zoho email instead of the leads' emails.
                         </div>
-                        <div class="card-body">
-                            {% if results %}
-                                {% if results[0].is_test %}
-                                    <div class="alert alert-success">
-                                        <h5>✅ Test emails sent!</h5>
-                                        <p>Test follow-up emails were sent to your Zoho email address for {{ results|length }} leads.</p>
-                                    </div>
-                                    <div class="table-responsive mb-4">
-                                        <table class="table table-hover">
-                                            <thead>
-                                                <tr>
-                                                    <th>Name</th>
-                                                    <th>Email</th>
-                                                    <th>Company</th>
-                                                    <th>Status</th>
-                                                </tr>
-                                            </thead>
-                                            <tbody>
-                                                {% for result in results %}
-                                                <tr>
-                                                    <td>{{ result.name }}</td>
-                                                    <td>{{ result.email }}</td>
-                                                    <td>{{ result.company }}</td>
-                                                    <td>
-                                                        {% if result.test_email_sent %}
-                                                            <span class="badge bg-success">Test Sent</span>
-                                                        {% else %}
-                                                            <span class="badge bg-danger">Failed</span>
-                                                        {% endif %}
-                                                    </td>
-                                                </tr>
-                                                {% endfor %}
-                                            </tbody>
-                                        </table>
-                                    </div>
-                                    <div class="d-grid">
-                                        <a href="/followup-emails" class="btn btn-primary">Back to Follow-Up Emails</a>
-                                    </div>
-                                {% else %}
-                                    <div class="alert alert-success">
-                                        <h5>✅ Follow-up emails sent successfully!</h5>
-                                        <p>Sent {{ results|length }} follow-up email(s) to leads, stored drafts in Notion, and updated "Follow-Up Date" column.</p>
-                                    </div>
-                                    <div class="table-responsive">
-                                        <table class="table table-striped">
-                                            <thead class="table-dark">
-                                                <tr>
-                                                    <th>Name</th>
-                                                    <th>Email</th>
-                                                    <th>Company</th>
-                                                    <th>Contacted Date</th>
-                                                    <th>Subject</th>
-                                                    <th>Status</th>
-                                                </tr>
-                                            </thead>
-                                            <tbody>
-                                                {% for result in results %}
-                                                <tr>
-                                                    <td>{{ result.name }}</td>
-                                                    <td>{{ result.email }}</td>
-                                                    <td>{{ result.company }}</td>
-                                                    <td>{{ result.contacted_date }}</td>
-                                                    <td>{{ result.subject }}</td>
-                                                    <td>
-                                                        {% if result.email_sent %}
-                                                            <span class="badge bg-success">Sent</span>
-                                                        {% else %}
-                                                            <span class="badge bg-danger">Failed</span>
-                                                        {% endif %}
-                                                    </td>
-                                                </tr>
-                                                {% endfor %}
-                                            </tbody>
-                                        </table>
-                                    </div>
-                                    <div class="d-grid">
-                                        <a href="/followup-emails" class="btn btn-primary">Back to Follow-Up Emails</a>
-                                    </div>
-                                {% endif %}
-                            {% else %}
-                                <div class="alert alert-info">
-                                    <h5>ℹ️ No leads ready for follow-up</h5>
-                                    <p>No leads were found that meet the follow-up criteria:</p>
-                                    <ul>
-                                        <li>"Contacted Date" is 2 or more days in the past</li>
-                                        <li>Email address is present</li>
-                                    </ul>
-                                </div>
-                                <div class="d-grid">
-                                    <a href="/followup-emails" class="btn btn-primary">Back to Follow-Up Emails</a>
-                                </div>
-                            {% endif %}
-                        </div>
+                        {% endif %}
+                    </div>
+                    <div class="card-body">
+                        {% if results %}
+                            <div class="alert alert-info">
+                                Processed {{ results|length }} leads for follow-up
+                            </div>
+                            
+                            <div class="table-responsive mb-4">
+                                <table class="table table-hover">
+                                    <thead>
+                                        <tr>
+                                            <th>Name</th>
+                                            <th>Email</th>
+                                            <th>Company</th>
+                                            <th>Status</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {% for result in results %}
+                                        <tr>
+                                            <td>{{ result.name }}</td>
+                                            <td>
+                                                {% if result.is_test %}
+                                                <span class="text-warning">Test Mode:</span>
+                                                {% endif %}
+                                                {{ result.email }}
+                                            </td>
+                                            <td>{{ result.company }}</td>
+                                            <td>
+                                                {% if result.is_test %}
+                                                    {% if result.test_email_sent %}
+                                                    <span class="badge bg-success">Test Sent</span>
+                                                    {% else %}
+                                                    <span class="badge bg-danger">Failed</span>
+                                                    {% endif %}
+                                                {% else %}
+                                                    {% if result.email_sent %}
+                                                    <span class="badge bg-success">Sent</span>
+                                                    {% else %}
+                                                    <span class="badge bg-danger">Failed</span>
+                                                    {% endif %}
+                                                {% endif %}
+                                            </td>
+                                        </tr>
+                                        {% endfor %}
+                                    </tbody>
+                                </table>
+                            </div>
+
+                            <div class="d-flex gap-3">
+                                <a href="/followup-emails" class="btn btn-primary" style="flex: 1;">Back to Follow-Up Emails</a>
+                                <a href="/cold-emails" class="btn btn-secondary" style="flex: 1;">Go to Cold Emails</a>
+                            </div>
+                        {% else %}
+                            <div class="alert alert-info">
+                                <h5>ℹ️ No leads ready for follow-up</h5>
+                                <p>No leads were found that meet the follow-up criteria:</p>
+                                <ul>
+                                    <li>"Contacted Date" is 2 or more days in the past</li>
+                                    <li>Email address is present</li>
+                                    <li>"Follow-Up email draft" column is empty</li>
+                                    <li>"Follow-Up Date" column is empty</li>
+                                </ul>
+                            </div>
+                            <div class="d-flex gap-3">
+                                <a href="/followup-emails" class="btn btn-primary" style="flex: 1;">Back to Follow-Up Emails</a>
+                                <a href="/cold-emails" class="btn btn-secondary" style="flex: 1;">Go to Cold Emails</a>
+                            </div>
+                        {% endif %}
                     </div>
                 </div>
             </div>
         </div>
-    </main>
-
-    <!-- Bootstrap JS and Popper.js -->
-    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    </div>
 </body>
 </html> 

@@ -141,6 +141,18 @@ class ColdEmailer:
                             "email": {
                                 "is_not_empty": True
                             }
+                        },
+                        {
+                            "property": "Follow-Up email draft",
+                            "rich_text": {
+                                "is_empty": True
+                            }
+                        },
+                        {
+                            "property": "Follow-Up Date",
+                            "date": {
+                                "is_empty": True
+                            }
                         }
                     ]
                 }
@@ -151,14 +163,14 @@ class ColdEmailer:
             if limit:
                 results = results[:limit]
             
-            print(f"\nThere are {len(results)} leads ready for follow-up emails (contacted 2+ days ago).")
+            print(f"\nThere are {len(results)} leads ready for follow-up emails (contacted 2+ days ago, no follow-up draft, no follow-up date).")
             
             return results
         except Exception as e:
             print(f"Error getting follow-up leads: {str(e)}")
             return []
 
-    def generate_followup_draft(self, lead: dict) -> dict:
+    def generate_followup_draft(self, lead: dict, followup_template: str = None, followup_subject: str = None) -> dict:
         """Generate follow-up email draft for a lead"""
         try:
             # Get lead details
@@ -175,9 +187,17 @@ class ColdEmailer:
             # Get contacted date
             contacted_date = lead.get('properties', {}).get('Contacted Date', {}).get('date', {}).get('start', '')
             
-            # Generate follow-up email content
-            # You can customize this template or load from a separate file
-            followup_template = """Hey {name},
+            # Use provided template or load from external file
+            if followup_template:
+                template_content = followup_template
+            else:
+                # Load follow-up email template from external file
+                try:
+                    with open('followup_template.txt', 'r', encoding='utf-8') as f:
+                        template_content = f.read().strip()
+                except FileNotFoundError:
+                    # Fallback template if file is not found
+                    template_content = """Hey {name},
 
 I wanted to follow up on my previous email about {company}. I know you're busy, so I'll keep this brief.
 
@@ -187,18 +207,24 @@ Looking forward to connecting!
 
 Best regards,
 Nadra"""
+                    print("Warning: followup_template.txt not found, using fallback template")
             
-            content = followup_template.format(
+            content = template_content.format(
                 name=first_name,
                 company=company
             )
             
-            # Generate follow-up subject
-            followup_subject = "Following up - {name}, quick question about {company}"
-            subject = followup_subject.format(
-                name=first_name,
-                company=company
-            )
+            # Use provided subject or default
+            if followup_subject:
+                subject = followup_subject.format(
+                    name=first_name,
+                    company=company
+                )
+            else:
+                subject = "{name}, I know what it's like".format(
+                    name=first_name,
+                    company=company
+                )
             
             return {
                 'to_name': name,

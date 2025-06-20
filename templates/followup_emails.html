@@ -39,6 +39,8 @@
     <ul>
       <li>✅ "Contacted Date" is 2 or more days in the past</li>
       <li>✅ Email address is present</li>
+      <li>✅ "Follow-Up email draft" column is empty</li>
+      <li>✅ "Follow-Up Date" column is empty</li>
     </ul>
     <p>The follow-up emails will be stored in the "Follow-Up email draft" column in your Notion database.</p>
   </div>
@@ -95,6 +97,25 @@
                  value="{{ config.get('zoho_app_password', '') }}">
           <div class="form-text" style="font-size: 0.85rem; color: #6c757d;">
             Required for test mode - generate this from Zoho Mail settings under Security > App Passwords
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card mb-4">
+      <div class="card-header">
+        <h5 class="mb-0">Follow-Up Email Template</h5>
+      </div>
+      <div class="card-body">
+        <div class="mb-4">
+          <label for="followup_subject" class="form-label">Follow-Up Email Subject</label>
+          <input type="text" class="form-control mb-3" id="followup_subject" name="followup_subject" 
+                 value="{% if config.get('followup_subject') %}{{ config.get('followup_subject') }}{% else %}{name}, I know what it's like{% endif %}" required>
+          
+          <label for="followup_template" class="form-label mt-2">Follow-Up Email Content</label>
+          <textarea class="form-control" id="followup_template" name="followup_template" rows="10" required>{% if config.get('followup_template') %}{{ config.get('followup_template') }}{% else %}{{ default_followup_template }}{% endif %}</textarea>
+          <div class="form-text">
+            Available placeholders: {name}, {company}
           </div>
         </div>
       </div>

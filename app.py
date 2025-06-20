@@ -18,6 +18,15 @@ except Exception as e:
     print(f"Error loading email template: {str(e)}")
     default_email_template = "Hey {name},\n\nI hope this email finds you well. I noticed you're at {company} and thought you might be interested in our services.\n\nBest regards,\nNadra"
 
+# Load default follow-up email template
+default_followup_template = ""
+try:
+    with open('followup_template.txt', 'r', encoding='utf-8') as f:
+        default_followup_template = f.read()
+except Exception as e:
+    print(f"Error loading follow-up template: {str(e)}")
+    default_followup_template = "Hey {name},\n\nI wanted to follow up on my previous email about {company}. I know you're busy, so I'll keep this brief.\n\nDid you get a chance to review my initial message? I'd love to hear your thoughts or schedule a quick call if you're interested.\n\nLooking forward to connecting!\n\nBest regards,\nNadra"
+
 @app.route('/')
 def index():
     # Redirect to cold emails page as default
@@ -45,7 +54,8 @@ def followup_emails():
     
     return render_template('followup_emails.html', 
                          config=config,
-                         default_email_template=default_email_template)
+                         default_email_template=default_email_template,
+                         default_followup_template=default_followup_template)
 
 @app.route('/cold-emails', methods=['POST'])
 def handle_cold_emails():
@@ -252,6 +262,8 @@ def handle_followup_emails():
     zoho_email = request.form.get('zoho_email')
     zoho_app_password = request.form.get('zoho_app_password')
     lead_limit = request.form.get('lead_limit')
+    followup_template = request.form.get('followup_template')
+    followup_subject = request.form.get('followup_subject')
     test_mode = 'test_mode' in request.form  # Check if checkbox is checked
     
     print("\n" + "="*50)
@@ -269,6 +281,8 @@ def handle_followup_emails():
         'zoho_email': zoho_email,
         'zoho_app_password': zoho_app_password,
         'lead_limit': lead_limit,
+        'followup_template': followup_template,
+        'followup_subject': followup_subject,
         'test_mode': test_mode
     }
     
@@ -304,16 +318,19 @@ def handle_followup_emails():
                 return render_template('followup_emails.html', 
                                     config=config,
                                     default_email_template=default_email_template,
+                                    default_followup_template=default_followup_template,
                                     success_message=f"{notion_success}<br>{zoho_success}")
             else:
                 return render_template('followup_emails.html', 
                                     config=config,
                                     default_email_template=default_email_template,
+                                    default_followup_template=default_followup_template,
                                     success_message=notion_success)
         except Exception as e:
             return render_template('followup_emails.html', 
                                 config=config,
                                 default_email_template=default_email_template,
+                                default_followup_template=default_followup_template,
                                 error_message=str(e))
     
     elif action == 'preview_followup':
@@ -336,7 +353,7 @@ def handle_followup_emails():
                     contacted_date = lead.get('properties', {}).get('Contacted Date', {}).get('date', {}).get('start', '')
                     
                     # Generate follow-up draft
-                    draft = emailer.generate_followup_draft(lead)
+                    draft = emailer.generate_followup_draft(lead, followup_template, followup_subject)
                     
                     if draft:
                         preview_leads.append({
@@ -353,11 +370,13 @@ def handle_followup_emails():
             return render_template('followup_preview.html', 
                                 leads=preview_leads,
                                 config=config,
-                                default_email_template=default_email_template)
+                                default_email_template=default_email_template,
+                                default_followup_template=default_followup_template)
         except Exception as e:
             return render_template('followup_emails.html', 
                                 config=config,
                                 default_email_template=default_email_template,
+                                default_followup_template=default_followup_template,
                                 error_message=str(e))
     
     elif action == 'generate_followup':
@@ -385,7 +404,7 @@ def handle_followup_emails():
                     contacted_date = lead.get('properties', {}).get('Contacted Date', {}).get('date', {}).get('start', '')
                     
                     # Generate follow-up draft
-                    draft = emailer.generate_followup_draft(lead)
+                    draft = emailer.generate_followup_draft(lead, followup_template, followup_subject)
                     
                     if draft:
                         stored = False
@@ -474,11 +493,13 @@ def handle_followup_emails():
             return render_template('followup_results.html', 
                                 results=followup_results,
                                 config=config,
-                                default_email_template=default_email_template)
+                                default_email_template=default_email_template,
+                                default_followup_template=default_followup_template)
         except Exception as e:
             return render_template('followup_emails.html', 
                                 config=config,
                                 default_email_template=default_email_template,
+                                default_followup_template=default_followup_template,
                                 error_message=str(e))
 
 # Add nl2br filter
