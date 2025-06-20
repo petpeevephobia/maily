@@ -23,6 +23,14 @@
             white-space: pre-wrap;
             line-height: 1.5;
         }
+        .spinner-border-sm {
+            width: 1rem;
+            height: 1rem;
+        }
+        .btn-loading {
+            pointer-events: none;
+            opacity: 0.7;
+        }
     </style>
 </head>
 <body class="bg-light">
@@ -77,8 +85,12 @@
                             {% endif %}
                             
                             <div class="d-flex gap-3">
-                                <button type="submit" class="btn btn-success" style="flex: 1;">
-                                    Send Follow-ups
+                                <button type="submit" id="sendFollowupsBtn" class="btn btn-success" style="flex: 1;">
+                                    <span class="btn-text">Send Follow-ups</span>
+                                    <span class="btn-loading d-none">
+                                        <span class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>
+                                        Sending...
+                                    </span>
                                 </button>
                                 <a href="/followup-emails" class="btn btn-outline-secondary" style="flex: 1;">
                                     Cancel
@@ -90,5 +102,22 @@
             </div>
         </div>
     </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            const form = document.querySelector('form');
+            const sendButton = document.getElementById('sendFollowupsBtn');
+            const btnText = sendButton.querySelector('.btn-text');
+            const btnLoading = sendButton.querySelector('.btn-loading');
+
+            form.addEventListener('submit', function() {
+                // Disable button and show loading state
+                sendButton.disabled = true;
+                sendButton.classList.add('btn-loading');
+                btnText.classList.add('d-none');
+                btnLoading.classList.remove('d-none');
+            });
+        });
+    </script>
 </body>
 </html> 
