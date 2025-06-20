@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Preview Emails - Maily</title>
+    <title>Preview Follow-Up Emails - Maily</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
     <style>
         .email-preview {
@@ -31,16 +31,16 @@
             <div class="col-md-8">
                 <div class="card shadow-sm">
                     <div class="card-header">
-                        <h5 class="mb-0">Preview Emails to be Sent</h5>
+                        <h5 class="mb-0">Preview Follow-Up Emails to be Generated</h5>
                         {% if config.test_mode %}
                         <div class="alert alert-warning mt-2 mb-0">
-                            <strong>Test Mode Active:</strong> Emails will be sent to your Zoho email ({{ config.zoho_email }}) instead of the leads' emails.
+                            <strong>Test Mode Active:</strong> Follow-up drafts will be generated but not stored in Notion. Test emails will be sent to your Zoho email address instead of the lead's email address.
                         </div>
                         {% endif %}
                     </div>
                     <div class="card-body">
                         <div class="alert alert-info">
-                            The following {{ leads|length }} leads will receive emails. Please review before proceeding.
+                            The following {{ leads|length }} leads will have follow-up email drafts generated. Please review before proceeding.
                         </div>
                         
                         {% for lead in leads %}
@@ -48,16 +48,12 @@
                             <div class="card-header">
                                 <h6 class="mb-0">{{ lead.name }} - {{ lead.company }}</h6>
                                 <small class="text-muted">
-                                    {% if lead.is_test %}
-                                    <span class="text-warning">Test Mode:</span> 
-                                    {% endif %}
-                                    {{ lead.email }}
+                                    Contacted: {{ lead.contacted_date }}
                                 </small>
                             </div>
                             <div class="card-body">
                                 <div class="email-preview">
                                     <div class="email-header">
-                                        <div>From: {{ config.zoho_email }}</div>
                                         <div>To: {{ lead.email }}</div>
                                         <div>Subject: {{ lead.subject }}</div>
                                     </div>
@@ -69,14 +65,12 @@
                         </div>
                         {% endfor %}
 
-                        <form method="post" action="/cold-emails">
-                            <input type="hidden" name="action" value="run">
+                        <form method="post" action="/followup-emails">
+                            <input type="hidden" name="action" value="generate_followup">
                             <input type="hidden" name="notion_api_key" value="{{ config.notion_api_key }}">
                             <input type="hidden" name="notion_database_id" value="{{ config.notion_database_id }}">
                             <input type="hidden" name="zoho_email" value="{{ config.zoho_email }}">
                             <input type="hidden" name="zoho_app_password" value="{{ config.zoho_app_password }}">
-                            <input type="hidden" name="email_template" value="{{ config.email_template }}">
-                            <input type="hidden" name="email_subject" value="{{ config.email_subject }}">
                             <input type="hidden" name="lead_limit" value="{{ config.lead_limit }}">
                             {% if config.test_mode %}
                             <input type="hidden" name="test_mode" value="on">
@@ -84,9 +78,9 @@
                             
                             <div class="d-flex gap-3">
                                 <button type="submit" class="btn btn-success" style="flex: 1;">
-                                    Send Emails
+                                    Send Follow-ups
                                 </button>
-                                <a href="/cold-emails" class="btn btn-outline-secondary" style="flex: 1;">
+                                <a href="/followup-emails" class="btn btn-outline-secondary" style="flex: 1;">
                                     Cancel
                                 </a>
                             </div>

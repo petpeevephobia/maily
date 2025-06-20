@@ -6,7 +6,7 @@ import re
 import json
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import List, Dict, Any, Tuple
 from bs4 import BeautifulSoup
 import openai
@@ -117,6 +117,123 @@ class ColdEmailer:
             print(f"Error getting leads: {str(e)}")
             return []
 
+    def get_leads_for_followup(self, limit: int = None) -> list:
+        """Get leads from Notion database that are ready for follow-up emails"""
+        try:
+            print("Querying Notion database for follow-up leads...")
+            
+            # Calculate date 2 days ago
+            two_days_ago = (datetime.now() - timedelta(days=2)).isoformat()
+            
+            # Query the database for leads ready for follow-up
+            response = self.notion.databases.query(
+                database_id=self.database_id,
+                filter={
+                    "and": [
+                        {
+                            "property": "Contacted Date",
+                            "date": {
+                                "on_or_before": two_days_ago
+                            }
+                        },
+                        {
+                            "property": "Email",
+                            "email": {
+                                "is_not_empty": True
+                            }
+                        }
+                    ]
+                }
+            )
+            results = response.get('results', [])
+            
+            # Apply limit if specified
+            if limit:
+                results = results[:limit]
+            
+            print(f"\nThere are {len(results)} leads ready for follow-up emails (contacted 2+ days ago).")
+            
+            return results
+        except Exception as e:
+            print(f"Error getting follow-up leads: {str(e)}")
+            return []
+
+    def generate_followup_draft(self, lead: dict) -> dict:
+        """Generate follow-up email draft for a lead"""
+        try:
+            # Get lead details
+            name = lead.get('properties', {}).get('Name', {}).get('title', [{}])[0].get('text', {}).get('content', '')
+            email = lead.get('properties', {}).get('Email', {}).get('email', '')
+            company = lead.get('properties', {}).get('Organisation', {}).get('rich_text', [{}])[0].get('text', {}).get('content', '')
+            
+            # Get first name only
+            first_name = name.split()[0] if name else ''
+            
+            # Get the original cold email draft to reference
+            cold_email_draft = lead.get('properties', {}).get('Cold email draft', {}).get('rich_text', [{}])[0].get('text', {}).get('content', '')
+            
+            # Get contacted date
+            contacted_date = lead.get('properties', {}).get('Contacted Date', {}).get('date', {}).get('start', '')
+            
+            # Generate follow-up email content
+            # You can customize this template or load from a separate file
+            followup_template = """Hey {name},
+
+I wanted to follow up on my previous email about {company}. I know you're busy, so I'll keep this brief.
+
+Did you get a chance to review my initial message? I'd love to hear your thoughts or schedule a quick call if you're interested.
+
+Looking forward to connecting!
+
+Best regards,
+Nadra"""
+            
+            content = followup_template.format(
+                name=first_name,
+                company=company
+            )
+            
+            # Generate follow-up subject
+            followup_subject = "Following up - {name}, quick question about {company}"
+            subject = followup_subject.format(
+                name=first_name,
+                company=company
+            )
+            
+            return {
+                'to_name': name,
+                'to_email': email,
+                'company': company,
+                'subject': subject,
+                'content': content,
+                'original_draft': cold_email_draft,
+                'contacted_date': contacted_date
+            }
+        except Exception as e:
+            print(f"Error generating follow-up draft: {str(e)}")
+            return None
+
+    def store_followup_draft(self, lead_id: str, subject: str, content: str) -> bool:
+        """Store follow-up email draft in Notion database"""
+        try:
+            self.notion.pages.update(
+                page_id=lead_id,
+                properties={
+                    "Follow-Up email draft": {
+                        "rich_text": [
+                            {
+                                "text": {
+                                    "content": f"Subject: {subject}\n\n{content}"
+                                }
+                            }
+                        ]
+                    }
+                }
+            )
+            return True
+        except Exception as e:
+            print(f"Error storing follow-up draft: {str(e)}")
+            return False
 
     def generate_email_draft(self, lead: dict) -> dict:
         """Generate email draft for a lead"""
@@ -185,7 +302,7 @@ class ColdEmailer:
             print(f"\nSMTP Test Error: {str(e)}")
             return False
 
-    def send_email(self, to_email: str, subject: str, content: str, lead_id: str = None) -> bool:
+    def send_email(self, to_email: str, subject: str, content: str, lead_id: str = None, test_mode: bool = False, is_followup: bool = False) -> bool:
         """Send email using Zoho SMTP and update Notion status if successful"""
         try:
             # Get Zoho credentials from environment variables
@@ -204,7 +321,11 @@ class ColdEmailer:
             if to_email != zoho_email:  # If not in test mode
                 msg['Bcc'] = BCC_EMAIL
             
-            msg['Subject'] = subject
+            # Modify subject line for test mode
+            if test_mode:
+                msg['Subject'] = f"[TEST] {subject}"
+            else:
+                msg['Subject'] = subject
             
             # Add body
             msg.attach(MIMEText(content, 'plain'))
@@ -225,8 +346,8 @@ class ColdEmailer:
             server.send_message(msg, to_addrs=recipients)
             server.quit()
 
-            # Update Notion status, draft, and contacted date if lead_id is provided
-            if lead_id:
+            # Update Notion status, draft, and contacted date if lead_id is provided and NOT a follow-up email
+            if lead_id and not is_followup:
                 current_date = datetime.now().isoformat()
                 self.notion.pages.update(
                     page_id=lead_id,
@@ -295,7 +416,8 @@ class ColdEmailer:
                     to_email=email,
                     subject="Would love to connect",
                     content=draft['content'],
-                    lead_id=lead['id']
+                    lead_id=lead['id'],
+                    test_mode=TEST_MODE
                 )
                 if sent:
                     print(f"Email sent to {email}")
@@ -358,7 +480,8 @@ def run(notion_api_key: str, notion_database_id: str, sender_email: str, email_t
                         to_email=draft['to_email'],
                         subject=draft['subject'],
                         content=draft['content'],
-                        lead_id=lead['id']
+                        lead_id=lead['id'],
+                        test_mode=TEST_MODE
                     )
                     results.append({
                         'name': draft['to_name'],
