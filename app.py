@@ -1,3 +1,5 @@
+from dotenv import load_dotenv
+load_dotenv()
 import os
 import json
 from flask import Flask, render_template, request, jsonify, redirect, Response, session
@@ -11,7 +13,7 @@ import time
 import uuid
 
 app = Flask(__name__)
-app.secret_key = 'maily2525jdklfdkslf84huwb7absdg93d9d9g7h708f0'
+app.secret_key = os.environ.get('SECRET_KEY', 'changeme')
 
 # Load default email template
 default_email_template = ""
