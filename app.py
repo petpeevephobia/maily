@@ -691,7 +691,8 @@ def handle_import_leads():
                     linkedin = row.get('Linkedin', '').strip()
                     title = row.get('Title', '').strip()
                     location = row.get('Location', '').strip()
-                    # category and funded_startups are ignored for now
+                    category = row.get('Category', '').strip()
+                    funded_year = row.get('Funded Year', '').strip()
                     
                     # Skip if required fields are empty
                     if not first_name or not last_name or not email:
@@ -756,6 +757,15 @@ def handle_import_leads():
                                 }
                             ]
                         } if location else None,
+                        "Industry": {
+                            "rich_text": [
+                                {
+                                    "text": {
+                                        "content": category
+                                    }
+                                }
+                            ]
+                        } if category else None,
                         "Lead Source": {
                             "select": {"name": "Cold Outreach"}
                         },
@@ -850,7 +860,8 @@ def start_import():
                 linkedin = row.get('Linkedin', '').strip()
                 title = row.get('Title', '').strip()
                 location = row.get('Location', '').strip()
-                # category, funded_year can be added as needed
+                category = row.get('Category', '').strip()
+                funded_year = row.get('Funded Year', '').strip()
                 if not first_name or not last_name or not email:
                     import_progress[session_id]['current'] = idx + 1
                     continue
@@ -867,6 +878,7 @@ def start_import():
                     "Website": {"url": website if website.startswith(('http://', 'https://')) else f'https://{website}'} if website else None,
                     "Social Media": {"url": linkedin if linkedin.startswith(('http://', 'https://')) else f'https://{linkedin}'} if linkedin else None,
                     "Location": {"rich_text": [{"text": {"content": location}}]} if location else None,
+                    "Industry": {"rich_text": [{"text": {"content": category}}]} if category else None,
                     "Lead Source": {"select": {"name": "Cold Outreach"}},
                     "Status": {"status": {"name": "Not contacted"}}
                 }
@@ -878,7 +890,6 @@ def start_import():
                 except Exception:
                     pass
                 import_progress[session_id]['current'] = idx + 1
-                time.sleep(0.05)  # simulate delay for UI
             import_progress[session_id]['current'] = total_leads
         except Exception:
             import_progress[session_id]['current'] = total_leads

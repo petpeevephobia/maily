@@ -109,8 +109,16 @@
                             </div>
                         </div>
 
+                        <div id="importTimer" style="display:none; margin-bottom: 1rem; text-align: center; color: #555;">
+                            <span>Elapsed time: <span id="elapsedTime">0</span> seconds</span>
+                        </div>
+
+                        <div id="importWarning" style="display:none; margin-bottom: 1rem; text-align: center; color: #b85c00; background: #fff3cd; border: 1px solid #ffeeba; border-radius: 4px; padding: 0.75rem;">
+                            <strong>Warning:</strong> Please do not close this tab while leads are being imported.
+                        </div>
+
                         <div id="importDoneMsg" style="display:none; margin-top: 1.5rem; text-align: center;">
-                            <div style="font-weight: normal; color: #198754; font-size: 1rem;">Import complete! Redirecting to home in <span id="countdown">5</span> seconds...</div>
+                            <div style="font-weight: normal; color: #198754; font-size: 1rem;">Import complete! Redirecting in <span id="countdown">5</span> seconds...</div>
                         </div>
 
                         <form method="post" action="/import-leads" id="importForm">
@@ -151,7 +159,12 @@
             const importProgressPercent = document.getElementById('importProgressPercent');
             const importDoneMsg = document.getElementById('importDoneMsg');
             const countdownSpan = document.getElementById('countdown');
+            const importTimer = document.getElementById('importTimer');
+            const elapsedTimeSpan = document.getElementById('elapsedTime');
+            const importWarning = document.getElementById('importWarning');
             let totalLeads = {{ total_rows }};
+            let timerInterval = null;
+            let importInProgress = false;
 
             if (importForm && importLeadsBtn) {
                 importForm.addEventListener('submit', function(e) {
@@ -159,8 +172,18 @@
                         e.preventDefault();
                         // Hide form/buttons
                         importForm.style.display = 'none';
-                        // Show progress bar
+                        // Show progress bar, timer, and warning
                         importProgressContainer.style.display = '';
+                        importTimer.style.display = '';
+                        importWarning.style.display = '';
+                        importInProgress = true;
+                        // Start stopwatch
+                        let secondsElapsed = 0;
+                        elapsedTimeSpan.textContent = secondsElapsed;
+                        timerInterval = setInterval(function() {
+                            secondsElapsed++;
+                            elapsedTimeSpan.textContent = secondsElapsed;
+                        }, 1000);
                         // Start import via POST
                         fetch('/start-import', {
                             method: 'POST',
@@ -171,6 +194,9 @@
                                 listenForImportProgress();
                             } else {
                                 alert('Failed to start import.');
+                                clearInterval(timerInterval);
+                                importWarning.style.display = 'none';
+                                importInProgress = false;
                             }
                         });
                     }
@@ -189,6 +215,9 @@
                         importProgressPercent.textContent = '100% (Done)';
                         // Show done message and start countdown
                         importDoneMsg.style.display = '';
+                        clearInterval(timerInterval);
+                        importWarning.style.display = 'none';
+                        importInProgress = false;
                         let seconds = 5;
                         countdownSpan.textContent = seconds;
                         const interval = setInterval(function() {
@@ -204,8 +233,20 @@
                 evtSource.onerror = function() {
                     evtSource.close();
                     importProgressPercent.textContent = 'Error';
+                    clearInterval(timerInterval);
+                    importWarning.style.display = 'none';
+                    importInProgress = false;
                 };
             }
+
+            // Warn user if they try to close the tab during import
+            window.addEventListener('beforeunload', function(e) {
+                if (importInProgress) {
+                    e.preventDefault();
+                    e.returnValue = 'Leads are still being imported. Are you sure you want to leave?';
+                    return 'Leads are still being imported. Are you sure you want to leave?';
+                }
+            });
         });
     </script>
 </body>
