@@ -2,16 +2,17 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <title>Maily: Follow-Up Email Assistant</title>
+  <title>Maily: Import Leads</title>
   <style>
     body { font-family: Arial, sans-serif; max-width: 800px; margin: 0 auto; padding: 20px; }
     .info { background: #f5f5f5; padding: 20px; border-radius: 5px; margin: 20px 0; }
     .form-group { margin-bottom: 15px; }
     label { display: block; margin-bottom: 5px; }
-    input[type="text"], input[type="password"], textarea { width: 100%; padding: 8px; }
+    input[type="text"], input[type="password"], input[type="url"], textarea { width: 100% !important; padding: 8px; }
+    .form-control { width: 100% !important; box-sizing: border-box; }
     .btn-primary { background: #007bff; color: white; border: none; padding: 10px 20px; cursor: pointer; }
     .btn-secondary { background: #6c757d; color: white; border: none; padding: 10px 20px; cursor: pointer; }
-    .btn-warning { background: #ffc107; color: #000; border: none; padding: 10px 20px; cursor: pointer; }
+    .btn-success { background: #198754; color: white; border: none; padding: 10px 20px; cursor: pointer; }
     .error { color: red; }
     .success { color: green; }
     .hidden { display: none; }
@@ -21,32 +22,37 @@
     .nav-tabs .nav-link { border: 1px solid transparent; border-top-left-radius: 0.25rem; border-top-right-radius: 0.25rem; color: #495057; text-decoration: none; padding: 0.5rem 1rem; }
     .nav-tabs .nav-link.active { background-color: #fff; border-color: #dee2e6 #dee2e6 #fff; color: #495057; }
     .nav-tabs .nav-link:hover { border-color: #e9ecef #e9ecef #dee2e6; }
+    .file-upload { border: 2px dashed #dee2e6; border-radius: 5px; padding: 20px; text-align: center; margin: 10px 0; }
+    .file-upload:hover { border-color: #007bff; }
+    .spinner-border-sm { width: 1rem; height: 1rem; }
+    .btn-loading { pointer-events: none; opacity: 0.7; }
   </style>
 </head>
 <body>
-  <h1>Maily: Follow-Up Email Assistant</h1>
+  <h1>Maily: Import Leads</h1>
   <p>Coded with ❤️ for TNA.</p>
   
   <!-- Navigation Tabs -->
   <div class="nav-tabs">
     <a href="/cold-emails" class="nav-link">Cold Emails</a>
-    <a href="/followup-emails" class="nav-link active">Follow-Up Emails</a>
-    <a href="/import-leads" class="nav-link">Import Leads</a>
+    <a href="/followup-emails" class="nav-link">Follow-Up Emails</a>
+    <a href="/import-leads" class="nav-link active">Import Leads</a>
   </div>
 
-  <div class="info" style="background: #fff3cd; border: 1px solid #ffeaa7;">
-    <h3>🔄 Follow-Up Email Campaign</h3>
-    <p><strong>Generate Follow-Up Emails</strong> will automatically create follow-up email drafts for leads that meet this criteria:</p>
+  <div class="info" style="background: #e7f3ff; border: 1px solid #b3d9ff;">
+    <h3>📥 Import Leads</h3>
+    <p><strong>Import leads from Google Sheets</strong> into your Notion CRM database. This will:</p>
     <ul>
-      <li>✅ "Contacted Date" is 2 or more days in the past</li>
-      <li>✅ Email address is present</li>
-      <li>✅ "Follow-Up email draft" column is empty</li>
-      <li>✅ "Follow-Up Date" column is empty</li>
+      <li>Read data from your Google Sheets URL</li>
+      <li>Map sheet columns to Notion properties</li>
+      <li>Create new lead entries in your Notion database</li>
+      <li>Skip duplicates based on email address</li>
     </ul>
-    <p>The follow-up emails will be stored in the "Follow-Up email draft" column in your Notion database.</p>
+    <p><strong>Required columns:</strong> First Name, Last Name, E-mail, Company Name</p>
+    <p><strong>Optional columns:</strong> Company Phone Number, Website, Linkedin, Category, Title, Location, Funded Startups</p>
   </div>
 
-  <form method="POST" action="/followup-emails">
+  <form method="POST" action="/import-leads" enctype="multipart/form-data">
     <div class="card mb-4">
       <div class="card-header">
         <h5 class="mb-0">Notion Configuration</h5>
@@ -80,71 +86,26 @@
 
     <div class="card mb-4">
       <div class="card-header">
-        <h5 class="mb-0">Email Configuration (for Test Mode)</h5>
+        <h5 class="mb-0">Google Sheets Configuration</h5>
       </div>
       <div class="card-body">
         <div class="mb-5" style="margin-bottom: 1rem !important;">
-          <label for="zoho_email" class="form-label mb-2">Zoho Email Address</label>
-          <input type="email" class="form-control mb-3" id="zoho_email" name="zoho_email" 
-                 value="{{ config.get('zoho_email', '') }}">
+          <label for="google_sheets_url" class="form-label mb-2">Google Sheets URL</label>
+          <input type="url" class="form-control mb-3" id="google_sheets_url" name="google_sheets_url" 
+                 placeholder="https://docs.google.com/spreadsheets/d/..." required>
           <div class="form-text" style="font-size: 0.85rem; color: #6c757d;">
-            Required for test mode - your Zoho Mail email address
+            Make sure your Google Sheet is publicly accessible (anyone with the link can view). Maily will use the first sheet automatically.
           </div>
         </div>
 
-        <div class="mb-5" style="margin-bottom: 1rem !important;">
-          <label for="zoho_app_password" class="form-label mb-2">Zoho App Password</label>
-          <input type="password" class="form-control mb-3" id="zoho_app_password" name="zoho_app_password" 
-                 value="{{ config.get('zoho_app_password', '') }}">
-          <div class="form-text" style="font-size: 0.85rem; color: #6c757d;">
-            Required for test mode - generate this from Zoho Mail settings under Security > App Passwords
-          </div>
-        </div>
-      </div>
-    </div>
-
-    <div class="card mb-4">
-      <div class="card-header">
-        <h5 class="mb-0">Follow-Up Email Template</h5>
-      </div>
-      <div class="card-body">
         <div class="mb-4">
-          <label for="followup_subject" class="form-label">Follow-Up Email Subject</label>
-          <input type="text" class="form-control mb-3" id="followup_subject" name="followup_subject" 
-                 value="{% if config.get('followup_subject') %}{{ config.get('followup_subject') }}{% else %}{name}, I know what it's like{% endif %}" required>
-          
-          <label for="followup_template" class="form-label mt-2">Follow-Up Email Content</label>
-          <textarea class="form-control" id="followup_template" name="followup_template" rows="10" required>{% if config.get('followup_template') %}{{ config.get('followup_template') }}{% else %}{{ default_followup_template }}{% endif %}</textarea>
+          <label for="skip_duplicates" class="form-check-label">
+            <input type="checkbox" class="form-check-input" id="skip_duplicates" name="skip_duplicates" checked>
+            Skip duplicate leads (based on email address)
+          </label>
           <div class="form-text">
-            Available placeholders: {name}, {company}
+            When enabled, leads with existing email addresses will be skipped
           </div>
-        </div>
-      </div>
-    </div>
-
-    <div class="card mb-4">
-      <div class="card-header">
-        <h5 class="mb-0">Options</h5>
-      </div>
-      <div class="card-body">
-        <div class="mb-3">
-          <label for="lead_limit" class="form-label">Number of leads to process</label>
-          <input type="number" class="form-control" id="lead_limit" name="lead_limit" 
-                 value="{{ config.get('lead_limit', '10') }}" min="1" max="100">
-          <div class="form-text">
-            Leave empty to process all available leads for follow-up
-          </div>
-        </div>
-
-        <div class="mb-3">
-          <div class="form-check">
-            <input type="checkbox" class="form-check-input" id="test_mode" name="test_mode" 
-                   {% if config.test_mode %}checked{% endif %}>
-            <label class="form-check-label" for="test_mode">Test Mode</label>
-          </div>
-          <small class="form-text text-muted">
-            When enabled, the test email(s) will be sent to your Zoho email address.
-          </small>
         </div>
       </div>
     </div>
@@ -166,11 +127,34 @@
                 style="padding: 0.75rem 1.5rem; font-weight: 500; border-radius: 0.5rem; flex: 1; border: 1px solid #dee2e6; cursor: pointer;">
             Test Connection
         </button>
-        <button type="submit" name="action" value="preview_followup" class="btn btn-primary" 
+        <button type="submit" name="action" value="preview" class="btn btn-primary" 
                 style="background-color: #0d6efd; padding: 0.75rem 1.5rem; font-weight: 500; border-radius: 0.5rem; box-shadow: 0 2px 4px rgba(0,0,0,0.1); transition: all 0.2s ease-in-out; flex: 1; cursor: pointer;">
-            Preview Follow-Up Emails
+            Preview Import
         </button>
     </div>
   </form>
+
+  <script>
+    document.addEventListener('DOMContentLoaded', function() {
+      const form = document.querySelector('form');
+      const importButton = document.getElementById('importLeadsBtn');
+      
+      if (importButton) {
+        const btnText = importButton.querySelector('.btn-text');
+        const btnLoading = importButton.querySelector('.btn-loading');
+
+        form.addEventListener('submit', function(e) {
+          const action = e.submitter?.value;
+          if (action === 'import') {
+            // Disable button and show loading state
+            importButton.disabled = true;
+            importButton.classList.add('btn-loading');
+            btnText.classList.add('d-none');
+            btnLoading.classList.remove('d-none');
+          }
+        });
+      }
+    });
+  </script>
 </body>
 </html> 

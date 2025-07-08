@@ -1,13 +1,17 @@
 import os
 import json
-from flask import Flask, render_template, request, jsonify, redirect
+from flask import Flask, render_template, request, jsonify, redirect, Response, session
 from notion_client import Client
 import cold_emailer
 import markupsafe
 import smtplib
 from datetime import datetime
+import threading
+import time
+import uuid
 
 app = Flask(__name__)
+app.secret_key = 'maily2525jdklfdkslf84huwb7absdg93d9d9g7h708f0'
 
 # Load default email template
 default_email_template = ""
@@ -26,6 +30,14 @@ try:
 except Exception as e:
     print(f"Error loading follow-up template: {str(e)}")
     default_followup_template = "Hey {name},\n\nI wanted to follow up on my previous email about {company}. I know you're busy, so I'll keep this brief.\n\nDid you get a chance to review my initial message? I'd love to hear your thoughts or schedule a quick call if you're interested.\n\nLooking forward to connecting!\n\nBest regards,\nNadra"
+
+# Global dictionary to store progress per session
+import_progress = {}
+
+@app.before_request
+def ensure_session_id():
+    if 'import_session_id' not in session:
+        session['import_session_id'] = str(uuid.uuid4())
 
 @app.route('/')
 def index():
@@ -56,6 +68,17 @@ def followup_emails():
                          config=config,
                          default_email_template=default_email_template,
                          default_followup_template=default_followup_template)
+
+@app.route('/import-leads')
+def import_leads():
+    # Load existing configuration
+    config = {}
+    if os.path.exists('config.json'):
+        with open('config.json', 'r') as f:
+            config = json.load(f)
+    
+    return render_template('import_leads.html', 
+                         config=config)
 
 @app.route('/cold-emails', methods=['POST'])
 def handle_cold_emails():
@@ -501,6 +524,379 @@ def handle_followup_emails():
                                 default_email_template=default_email_template,
                                 default_followup_template=default_followup_template,
                                 error_message=str(e))
+
+@app.route('/import-leads', methods=['POST'])
+def handle_import_leads():
+    action = request.form.get('action')
+    
+    # Get form data
+    notion_api_key = request.form.get('notion_api_key')
+    notion_database_id = request.form.get('notion_database_id')
+    google_sheets_url = request.form.get('google_sheets_url')
+    skip_duplicates = 'skip_duplicates' in request.form
+    
+    print("\n" + "="*50)
+    print("IMPORT LEADS FORM SUBMISSION DEBUG")
+    print("="*50)
+    print(f"Action: {action}")
+    print(f"Google Sheets URL: {google_sheets_url}")
+    print(f"Skip duplicates: {skip_duplicates}")
+    print("="*50 + "\n")
+    
+    # Store configuration
+    config = {
+        'notion_api_key': notion_api_key,
+        'notion_database_id': notion_database_id,
+        'google_sheets_url': google_sheets_url,
+        'skip_duplicates': skip_duplicates
+    }
+    
+    # Save configuration
+    with open('config.json', 'w') as f:
+        json.dump(config, f)
+    
+    if action == 'test':
+        try:
+            # Test Notion connection
+            notion = Client(auth=notion_api_key)
+            database = notion.databases.retrieve(database_id=notion_database_id)
+            notion_success = f"Successfully connected to Notion database: {database.get('title', [{'plain_text': 'Untitled'}])[0]['plain_text']}"
+            
+            return render_template('import_leads.html', 
+                                config=config,
+                                success_message=notion_success)
+        except Exception as e:
+            return render_template('import_leads.html', 
+                                config=config,
+                                error_message=str(e))
+    
+    elif action == 'preview':
+        try:
+            # Extract spreadsheet ID from Google Sheets URL
+            import re
+            spreadsheet_id_match = re.search(r'/spreadsheets/d/([a-zA-Z0-9-_]+)', google_sheets_url)
+            if not spreadsheet_id_match:
+                return render_template('import_leads.html', 
+                                    config=config,
+                                    error_message="Invalid Google Sheets URL format")
+            
+            spreadsheet_id = spreadsheet_id_match.group(1)
+            
+            # Read Google Sheets data
+            import requests
+            
+            # Convert to CSV export URL
+            csv_url = f"https://docs.google.com/spreadsheets/d/{spreadsheet_id}/gviz/tq?tqx=out:csv"
+            
+            response = requests.get(csv_url)
+            if response.status_code != 200:
+                return render_template('import_leads.html', 
+                                    config=config,
+                                    error_message="Could not access Google Sheet. Make sure it's publicly accessible.")
+            
+            # Parse CSV data
+            import csv
+            import io
+            
+            csv_content = response.text
+            csv_reader = csv.DictReader(io.StringIO(csv_content))
+            
+            # Collect all leads
+            all_leads = []
+            for row in csv_reader:
+                all_leads.append({
+                    'first_name': row.get('First Name', ''),
+                    'last_name': row.get('Last Name', ''),
+                    'email': row.get('E-mail', ''),
+                    'company_phone': row.get('Company Phone Number', ''),
+                    'company_name': row.get('Company Name', ''),
+                    'website': row.get('Website', ''),
+                    'linkedin': row.get('Linkedin', ''),
+                    'category': row.get('Category', ''),
+                    'title': row.get('Title', ''),
+                    'location': row.get('Location', ''),
+                    'funded_year': row.get('Funded Year', '')
+                })
+            
+            return render_template('import_preview.html', 
+                                leads=all_leads,
+                                config=config,
+                                total_rows=len(all_leads))
+        except Exception as e:
+            return render_template('import_leads.html', 
+                                config=config,
+                                error_message=f"Error processing Google Sheet: {str(e)}")
+    
+    elif action == 'import':
+        try:
+            # Extract spreadsheet ID from Google Sheets URL
+            import re
+            spreadsheet_id_match = re.search(r'/spreadsheets/d/([a-zA-Z0-9-_]+)', google_sheets_url)
+            if not spreadsheet_id_match:
+                return render_template('import_leads.html', 
+                                    config=config,
+                                    error_message="Invalid Google Sheets URL format")
+            
+            spreadsheet_id = spreadsheet_id_match.group(1)
+            
+            # Initialize Notion client
+            notion = Client(auth=notion_api_key)
+            
+            # Read Google Sheets data
+            import requests
+            
+            # Convert to CSV export URL
+            csv_url = f"https://docs.google.com/spreadsheets/d/{spreadsheet_id}/gviz/tq?tqx=out:csv"
+            
+            response = requests.get(csv_url)
+            if response.status_code != 200:
+                return render_template('import_leads.html', 
+                                    config=config,
+                                    error_message="Could not access Google Sheet. Make sure it's publicly accessible.")
+            
+            # Parse CSV data
+            import csv
+            import io
+            
+            csv_content = response.text
+            csv_reader = csv.DictReader(io.StringIO(csv_content))
+            
+            # Get existing emails if skip_duplicates is enabled
+            existing_emails = set()
+            if skip_duplicates:
+                try:
+                    response = notion.databases.query(database_id=notion_database_id)
+                    for page in response.get('results', []):
+                        email = page.get('properties', {}).get('Email', {}).get('email', '')
+                        if email:
+                            existing_emails.add(email.lower())
+                except Exception as e:
+                    print(f"Warning: Could not fetch existing emails: {str(e)}")
+            
+            # Import leads
+            imported_count = 0
+            skipped_count = 0
+            error_count = 0
+            
+            for row in csv_reader:
+                try:
+                    first_name = row.get('First Name', '').strip()
+                    last_name = row.get('Last Name', '').strip()
+                    email = row.get('E-mail', '').strip()
+                    company_phone = row.get('Company Phone Number', '').strip()
+                    company_name = row.get('Company Name', '').strip()
+                    website = row.get('Website', '').strip()
+                    linkedin = row.get('Linkedin', '').strip()
+                    title = row.get('Title', '').strip()
+                    location = row.get('Location', '').strip()
+                    # category and funded_startups are ignored for now
+                    
+                    # Skip if required fields are empty
+                    if not first_name or not last_name or not email:
+                        error_count += 1
+                        continue
+                    
+                    # Skip duplicates if enabled
+                    if skip_duplicates and email.lower() in existing_emails:
+                        skipped_count += 1
+                        continue
+                    
+                    # Combine first and last name
+                    full_name = f"{first_name} {last_name}".strip()
+                    
+                    # Create lead in Notion
+                    properties = {
+                        "Name": {
+                            "title": [
+                                {
+                                    "text": {
+                                        "content": full_name
+                                    }
+                                }
+                            ]
+                        },
+                        "Email": {
+                            "email": email
+                        },
+                        "Phone": {
+                            "phone_number": company_phone
+                        } if company_phone else None,
+                        "Title": {
+                            "rich_text": [
+                                {
+                                    "text": {
+                                        "content": title
+                                    }
+                                }
+                            ]
+                        } if title else None,
+                        "Organisation": {
+                            "rich_text": [
+                                {
+                                    "text": {
+                                        "content": company_name
+                                    }
+                                }
+                            ]
+                        } if company_name else None,
+                        "Website": {
+                            "url": website if website.startswith(('http://', 'https://')) else f'https://{website}'
+                        } if website else None,
+                        "Social Media": {
+                            "url": linkedin if linkedin.startswith(('http://', 'https://')) else f'https://{linkedin}'
+                        } if linkedin else None,
+                        "Location": {
+                            "rich_text": [
+                                {
+                                    "text": {
+                                        "content": location
+                                    }
+                                }
+                            ]
+                        } if location else None,
+                        "Lead Source": {
+                            "select": {"name": "Cold Outreach"}
+                        },
+                        "Status": {
+                            "status": {"name": "Not contacted"}
+                        }
+                    }
+                    # Remove None values (for optional fields not present)
+                    properties = {k: v for k, v in properties.items() if v is not None}
+                    
+                    # Create the page
+                    notion.pages.create(
+                        parent={"database_id": notion_database_id},
+                        properties=properties
+                    )
+                    
+                    imported_count += 1
+                    
+                    # Add to existing emails set to prevent duplicates within the same import
+                    if skip_duplicates:
+                        existing_emails.add(email.lower())
+                        
+                except Exception as e:
+                    print(f"Error importing lead {first_name} {last_name}: {str(e)}")
+                    error_count += 1
+            
+            success_message = f"Import completed! Imported {imported_count} leads"
+            if skipped_count > 0:
+                success_message += f", skipped {skipped_count} duplicates"
+            if error_count > 0:
+                success_message += f", {error_count} errors"
+            
+            return render_template('import_leads.html', 
+                                config=config,
+                                success_message=success_message)
+                                
+        except Exception as e:
+            return render_template('import_leads.html', 
+                                config=config,
+                                error_message=f"Error during import: {str(e)}")
+    
+    return render_template('import_leads.html', config=config)
+
+@app.route('/start-import', methods=['POST'])
+def start_import():
+    # Get session id
+    session_id = session.get('import_session_id')
+    # Get form data
+    notion_api_key = request.form.get('notion_api_key')
+    notion_database_id = request.form.get('notion_database_id')
+    google_sheets_url = request.form.get('google_sheets_url')
+    skip_duplicates = 'skip_duplicates' in request.form
+    # Parse Google Sheet
+    import re, requests, csv, io
+    spreadsheet_id_match = re.search(r'/spreadsheets/d/([a-zA-Z0-9-_]+)', google_sheets_url)
+    if not spreadsheet_id_match:
+        return 'Invalid Google Sheets URL', 400
+    spreadsheet_id = spreadsheet_id_match.group(1)
+    csv_url = f"https://docs.google.com/spreadsheets/d/{spreadsheet_id}/gviz/tq?tqx=out:csv"
+    response = requests.get(csv_url)
+    if response.status_code != 200:
+        return 'Could not access Google Sheet', 400
+    csv_content = response.text
+    csv_reader = csv.DictReader(io.StringIO(csv_content))
+    all_leads = list(csv_reader)
+    total_leads = len(all_leads)
+    # Start import in background thread
+    def do_import():
+        import_progress[session_id] = {'current': 0, 'total': total_leads}
+        try:
+            from notion_client import Client
+            notion = Client(auth=notion_api_key)
+            # Get existing emails if skip_duplicates is enabled
+            existing_emails = set()
+            if skip_duplicates:
+                try:
+                    resp = notion.databases.query(database_id=notion_database_id)
+                    for page in resp.get('results', []):
+                        email = page.get('properties', {}).get('Email', {}).get('email', '')
+                        if email:
+                            existing_emails.add(email.lower())
+                except Exception:
+                    pass
+            for idx, row in enumerate(all_leads):
+                # ... mapping logic as before ...
+                first_name = row.get('First Name', '').strip()
+                last_name = row.get('Last Name', '').strip()
+                email = row.get('E-mail', '').strip()
+                company_phone = row.get('Company Phone Number', '').strip()
+                company_name = row.get('Company Name', '').strip()
+                website = row.get('Website', '').strip()
+                linkedin = row.get('Linkedin', '').strip()
+                title = row.get('Title', '').strip()
+                location = row.get('Location', '').strip()
+                # category, funded_year can be added as needed
+                if not first_name or not last_name or not email:
+                    import_progress[session_id]['current'] = idx + 1
+                    continue
+                if skip_duplicates and email.lower() in existing_emails:
+                    import_progress[session_id]['current'] = idx + 1
+                    continue
+                full_name = f"{first_name} {last_name}".strip()
+                properties = {
+                    "Name": {"title": [{"text": {"content": full_name}}]},
+                    "Email": {"email": email},
+                    "Phone": {"phone_number": company_phone} if company_phone else None,
+                    "Title": {"rich_text": [{"text": {"content": title}}]} if title else None,
+                    "Organisation": {"rich_text": [{"text": {"content": company_name}}]} if company_name else None,
+                    "Website": {"url": website if website.startswith(('http://', 'https://')) else f'https://{website}'} if website else None,
+                    "Social Media": {"url": linkedin if linkedin.startswith(('http://', 'https://')) else f'https://{linkedin}'} if linkedin else None,
+                    "Location": {"rich_text": [{"text": {"content": location}}]} if location else None,
+                    "Lead Source": {"select": {"name": "Cold Outreach"}},
+                    "Status": {"status": {"name": "Not contacted"}}
+                }
+                properties = {k: v for k, v in properties.items() if v is not None}
+                try:
+                    notion.pages.create(parent={"database_id": notion_database_id}, properties=properties)
+                    if skip_duplicates:
+                        existing_emails.add(email.lower())
+                except Exception:
+                    pass
+                import_progress[session_id]['current'] = idx + 1
+                time.sleep(0.05)  # simulate delay for UI
+            import_progress[session_id]['current'] = total_leads
+        except Exception:
+            import_progress[session_id]['current'] = total_leads
+    threading.Thread(target=do_import, daemon=True).start()
+    return '', 202
+
+@app.route('/import-progress')
+def import_progress_sse():
+    session_id = session.get('import_session_id')
+    def event_stream():
+        last_sent = -1
+        while True:
+            prog = import_progress.get(session_id, {'current': 0, 'total': 1})
+            if prog['current'] != last_sent:
+                yield f"data: {{\"current\": {prog['current']}, \"total\": {prog['total']}}}\n\n"
+                last_sent = prog['current']
+            if prog['current'] >= prog['total']:
+                break
+            time.sleep(0.2)
+    return Response(event_stream(), mimetype='text/event-stream')
 
 # Add nl2br filter
 @app.template_filter('nl2br')
