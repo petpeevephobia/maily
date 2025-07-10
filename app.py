@@ -39,6 +39,38 @@ import_progress = {}
 # Store import tasks to prevent garbage collection
 import_tasks = {}
 
+# File-based progress storage for recovery after restarts
+import os
+
+def save_progress(session_id, progress_data):
+    """Save progress to file for recovery after restarts"""
+    try:
+        progress_file = f"import_progress_{session_id}.json"
+        with open(progress_file, 'w') as f:
+            json.dump(progress_data, f)
+    except Exception as e:
+        print(f"Error saving progress: {str(e)}")
+
+def load_progress(session_id):
+    """Load progress from file for recovery after restarts"""
+    try:
+        progress_file = f"import_progress_{session_id}.json"
+        if os.path.exists(progress_file):
+            with open(progress_file, 'r') as f:
+                return json.load(f)
+    except Exception as e:
+        print(f"Error loading progress: {str(e)}")
+    return None
+
+def cleanup_progress_file(session_id):
+    """Clean up progress file after completion"""
+    try:
+        progress_file = f"import_progress_{session_id}.json"
+        if os.path.exists(progress_file):
+            os.remove(progress_file)
+    except Exception as e:
+        print(f"Error cleaning up progress file: {str(e)}")
+
 @app.before_request
 def ensure_session_id():
     if 'import_session_id' not in session:
@@ -848,7 +880,11 @@ def start_import():
         try:
             print(f"Import thread started for session {session_id}")
             print(f"Total leads to process: {total_leads}")
-            import_progress[session_id] = {'current': 0, 'total': total_leads, 'status': 'starting'}
+            
+            # Initialize progress
+            progress_data = {'current': 0, 'total': total_leads, 'status': 'starting'}
+            import_progress[session_id] = progress_data
+            save_progress(session_id, progress_data)
             
             from notion_client import Client
             notion = Client(auth=notion_api_key)
@@ -858,7 +894,10 @@ def start_import():
             if skip_duplicates:
                 try:
                     print(f"Checking for duplicates...")
-                    import_progress[session_id]['status'] = 'checking_duplicates'
+                    progress_data['status'] = 'checking_duplicates'
+                    import_progress[session_id] = progress_data
+                    save_progress(session_id, progress_data)
+                    
                     resp = notion.databases.query(database_id=notion_database_id)
                     for page in resp.get('results', []):
                         email = page.get('properties', {}).get('Email', {}).get('email', '')
@@ -868,11 +907,13 @@ def start_import():
                 except Exception as e:
                     print(f"Warning: Could not fetch existing emails: {str(e)}")
             
-            import_progress[session_id]['status'] = 'importing'
+            progress_data['status'] = 'importing'
+            import_progress[session_id] = progress_data
+            save_progress(session_id, progress_data)
             print(f"Starting import of {total_leads} leads")
             
             # Process leads in smaller batches to be more resilient
-            batch_size = 5  # Reduced batch size
+            batch_size = 3  # Even smaller batch size for Render
             imported_count = 0
             skipped_count = 0
             error_count = 0
@@ -903,14 +944,20 @@ def start_import():
                         if not first_name or not last_name or not email:
                             print(f"Skipping lead {global_idx + 1}: Missing required fields")
                             error_count += 1
-                            import_progress[session_id]['current'] = global_idx + 1
+                            progress_data['current'] = global_idx + 1
+                            progress_data['errors'] = error_count
+                            import_progress[session_id] = progress_data
+                            save_progress(session_id, progress_data)
                             continue
                         
                         # Skip duplicates if enabled
                         if skip_duplicates and email.lower() in existing_emails:
                             print(f"Skipping lead {global_idx + 1}: Duplicate email")
                             skipped_count += 1
-                            import_progress[session_id]['current'] = global_idx + 1
+                            progress_data['current'] = global_idx + 1
+                            progress_data['skipped'] = skipped_count
+                            import_progress[session_id] = progress_data
+                            save_progress(session_id, progress_data)
                             continue
                         
                         full_name = f"{first_name} {last_name}".strip()
@@ -944,25 +991,34 @@ def start_import():
                         error_count += 1
                     
                     # Update progress more frequently
-                    import_progress[session_id]['current'] = global_idx + 1
-                    import_progress[session_id]['imported'] = imported_count
-                    import_progress[session_id]['skipped'] = skipped_count
-                    import_progress[session_id]['errors'] = error_count
+                    progress_data['current'] = global_idx + 1
+                    progress_data['imported'] = imported_count
+                    progress_data['skipped'] = skipped_count
+                    progress_data['errors'] = error_count
+                    import_progress[session_id] = progress_data
+                    save_progress(session_id, progress_data)
                 
                 # Longer delay between batches to be more gentle on Render
-                time.sleep(0.5)
+                time.sleep(1.0)  # Increased delay
             
             print(f"Import completed: {imported_count} imported, {skipped_count} skipped, {error_count} errors")
-            import_progress[session_id]['current'] = total_leads
-            import_progress[session_id]['status'] = 'completed'
-            import_progress[session_id]['imported'] = imported_count
-            import_progress[session_id]['skipped'] = skipped_count
-            import_progress[session_id]['errors'] = error_count
+            progress_data['current'] = total_leads
+            progress_data['status'] = 'completed'
+            progress_data['imported'] = imported_count
+            progress_data['skipped'] = skipped_count
+            progress_data['errors'] = error_count
+            import_progress[session_id] = progress_data
+            save_progress(session_id, progress_data)
+            
+            # Clean up progress file
+            cleanup_progress_file(session_id)
             
         except Exception as e:
             print(f"Import error: {str(e)}")
-            import_progress[session_id]['status'] = 'error'
-            import_progress[session_id]['error'] = str(e)
+            progress_data['status'] = 'error'
+            progress_data['error'] = str(e)
+            import_progress[session_id] = progress_data
+            save_progress(session_id, progress_data)
     
     # Use non-daemon thread to prevent it from being killed
     import_thread = threading.Thread(target=do_import, daemon=False)
@@ -971,11 +1027,209 @@ def start_import():
     
     return '', 202
 
+@app.route('/resume-import', methods=['POST'])
+def resume_import():
+    """Resume import from where it left off"""
+    session_id = session.get('import_session_id')
+    
+    # Load progress from file
+    progress_data = load_progress(session_id)
+    if not progress_data or progress_data.get('status') in ['completed', 'error']:
+        return jsonify({'error': 'No active import to resume'})
+    
+    # Get form data
+    notion_api_key = request.form.get('notion_api_key')
+    notion_database_id = request.form.get('notion_database_id')
+    google_sheets_url = request.form.get('google_sheets_url')
+    skip_duplicates = 'skip_duplicates' in request.form
+    
+    # Parse Google Sheet again
+    import re, requests, csv, io
+    spreadsheet_id_match = re.search(r'/spreadsheets/d/([a-zA-Z0-9-_]+)', google_sheets_url)
+    if not spreadsheet_id_match:
+        return jsonify({'error': 'Invalid Google Sheets URL'})
+    
+    spreadsheet_id = spreadsheet_id_match.group(1)
+    csv_url = f"https://docs.google.com/spreadsheets/d/{spreadsheet_id}/gviz/tq?tqx=out:csv"
+    response = requests.get(csv_url)
+    if response.status_code != 200:
+        return jsonify({'error': 'Could not access Google Sheet'})
+    
+    csv_content = response.text
+    csv_reader = csv.DictReader(io.StringIO(csv_content))
+    all_leads = list(csv_reader)
+    
+    # Resume from where we left off
+    current_position = progress_data.get('current', 0)
+    print(f"Resuming import from position {current_position}")
+    
+    def resume_import():
+        try:
+            from notion_client import Client
+            notion = Client(auth=notion_api_key)
+            
+            # Get existing emails if skip_duplicates is enabled
+            existing_emails = set()
+            if skip_duplicates:
+                try:
+                    resp = notion.databases.query(database_id=notion_database_id)
+                    for page in resp.get('results', []):
+                        email = page.get('properties', {}).get('Email', {}).get('email', '')
+                        if email:
+                            existing_emails.add(email.lower())
+                except Exception as e:
+                    print(f"Warning: Could not fetch existing emails: {str(e)}")
+            
+            # Resume progress
+            imported_count = progress_data.get('imported', 0)
+            skipped_count = progress_data.get('skipped', 0)
+            error_count = progress_data.get('errors', 0)
+            
+            progress_data['status'] = 'importing'
+            import_progress[session_id] = progress_data
+            save_progress(session_id, progress_data)
+            
+            # Process remaining leads
+            batch_size = 3
+            for batch_start in range(current_position, len(all_leads), batch_size):
+                batch_end = min(batch_start + batch_size, len(all_leads))
+                batch = all_leads[batch_start:batch_end]
+                
+                print(f"Processing batch {batch_start//batch_size + 1} ({batch_start+1}-{batch_end})")
+                
+                for idx, row in enumerate(batch):
+                    global_idx = batch_start + idx
+                    
+                    try:
+                        first_name = row.get('First Name', '').strip()
+                        last_name = row.get('Last Name', '').strip()
+                        email = row.get('E-mail', '').strip()
+                        company_phone = row.get('Company Phone Number', '').strip()
+                        company_name = row.get('Company Name', '').strip()
+                        website = row.get('Website', '').strip()
+                        linkedin = row.get('Linkedin', '').strip()
+                        title = row.get('Title', '').strip()
+                        location = row.get('Location', '').strip()
+                        category = row.get('Category', '').strip()
+                        funded_year = row.get('Funded Year', '').strip()
+                        
+                        # Skip if required fields are empty
+                        if not first_name or not last_name or not email:
+                            print(f"Skipping lead {global_idx + 1}: Missing required fields")
+                            error_count += 1
+                            progress_data['current'] = global_idx + 1
+                            progress_data['errors'] = error_count
+                            import_progress[session_id] = progress_data
+                            save_progress(session_id, progress_data)
+                            continue
+                        
+                        # Skip duplicates if enabled
+                        if skip_duplicates and email.lower() in existing_emails:
+                            print(f"Skipping lead {global_idx + 1}: Duplicate email")
+                            skipped_count += 1
+                            progress_data['current'] = global_idx + 1
+                            progress_data['skipped'] = skipped_count
+                            import_progress[session_id] = progress_data
+                            save_progress(session_id, progress_data)
+                            continue
+                        
+                        full_name = f"{first_name} {last_name}".strip()
+                        properties = {
+                            "Name": {"title": [{"text": {"content": full_name}}]},
+                            "Email": {"email": email},
+                            "Phone": {"phone_number": company_phone} if company_phone else None,
+                            "Title": {"rich_text": [{"text": {"content": title}}]} if title else None,
+                            "Organisation": {"rich_text": [{"text": {"content": company_name}}]} if company_name else None,
+                            "Website": {"url": website if website.startswith(('http://', 'https://')) else f'https://{website}'} if website else None,
+                            "Social Media": {"url": linkedin if linkedin.startswith(('http://', 'https://')) else f'https://{linkedin}'} if linkedin else None,
+                            "Location": {"rich_text": [{"text": {"content": location}}]} if location else None,
+                            "Industry": {"rich_text": [{"text": {"content": category}}]} if category else None,
+                            "Lead Source": {"select": {"name": "Cold Outreach"}},
+                            "Status": {"status": {"name": "Not contacted"}}
+                        }
+                        properties = {k: v for k, v in properties.items() if v is not None}
+                        
+                        # Create the page
+                        notion.pages.create(parent={"database_id": notion_database_id}, properties=properties)
+                        
+                        # Add to existing emails set to prevent duplicates within the same import
+                        if skip_duplicates:
+                            existing_emails.add(email.lower())
+                        
+                        imported_count += 1
+                        print(f"Imported lead {global_idx + 1}: {full_name} ({email})")
+                            
+                    except Exception as e:
+                        print(f"Error importing lead {global_idx + 1}: {str(e)}")
+                        error_count += 1
+                    
+                    # Update progress
+                    progress_data['current'] = global_idx + 1
+                    progress_data['imported'] = imported_count
+                    progress_data['skipped'] = skipped_count
+                    progress_data['errors'] = error_count
+                    import_progress[session_id] = progress_data
+                    save_progress(session_id, progress_data)
+                
+                time.sleep(1.0)
+            
+            print(f"Import completed: {imported_count} imported, {skipped_count} skipped, {error_count} errors")
+            progress_data['current'] = len(all_leads)
+            progress_data['status'] = 'completed'
+            progress_data['imported'] = imported_count
+            progress_data['skipped'] = skipped_count
+            progress_data['errors'] = error_count
+            import_progress[session_id] = progress_data
+            save_progress(session_id, progress_data)
+            
+            # Clean up progress file
+            cleanup_progress_file(session_id)
+            
+        except Exception as e:
+            print(f"Resume import error: {str(e)}")
+            progress_data['status'] = 'error'
+            progress_data['error'] = str(e)
+            import_progress[session_id] = progress_data
+            save_progress(session_id, progress_data)
+    
+    # Start resume thread
+    resume_thread = threading.Thread(target=resume_import, daemon=False)
+    import_tasks[session_id] = resume_thread
+    resume_thread.start()
+    
+    return jsonify({'status': 'resuming', 'current': current_position, 'total': len(all_leads)})
+
 @app.route('/import-status')
 def import_status():
     session_id = session.get('import_session_id')
-    prog = import_progress.get(session_id, {'current': 0, 'total': 1, 'status': 'unknown'})
+    prog = import_progress.get(session_id)
+    if not prog:
+        prog = load_progress(session_id)
+    if not prog:
+        prog = {'current': 0, 'total': 1, 'status': 'unknown'}
     return jsonify(prog)
+
+@app.route('/debug-import')
+def debug_import():
+    """Debug endpoint to check import status and files"""
+    session_id = session.get('import_session_id')
+    debug_info = {
+        'session_id': session_id,
+        'memory_progress': import_progress.get(session_id),
+        'file_progress': load_progress(session_id),
+        'active_tasks': list(import_tasks.keys()),
+        'all_progress_files': []
+    }
+    
+    # List all progress files
+    try:
+        for file in os.listdir('.'):
+            if file.startswith('import_progress_') and file.endswith('.json'):
+                debug_info['all_progress_files'].append(file)
+    except Exception as e:
+        debug_info['file_list_error'] = str(e)
+    
+    return jsonify(debug_info)
 
 @app.route('/import-progress')
 def import_progress_sse():
@@ -984,7 +1238,17 @@ def import_progress_sse():
         last_sent = -1
         last_status = None
         while True:
-            prog = import_progress.get(session_id, {'current': 0, 'total': 1, 'status': 'unknown'})
+            # Check both memory and file-based progress
+            prog = import_progress.get(session_id)
+            if not prog:
+                # Try to load from file (recovery after restart)
+                prog = load_progress(session_id)
+                if prog:
+                    import_progress[session_id] = prog
+                    print(f"Recovered progress from file: {prog}")
+            
+            if not prog:
+                prog = {'current': 0, 'total': 1, 'status': 'unknown'}
             
             # Send progress update if changed
             if prog['current'] != last_sent or prog.get('status') != last_status:
@@ -1016,7 +1280,12 @@ def import_progress_sse():
             time.sleep(0.5)  # Reduced frequency to prevent overwhelming the client
         
         # Send final update
-        prog = import_progress.get(session_id, {'current': 0, 'total': 1, 'status': 'unknown'})
+        prog = import_progress.get(session_id)
+        if not prog:
+            prog = load_progress(session_id)
+        if not prog:
+            prog = {'current': 0, 'total': 1, 'status': 'unknown'}
+            
         data = {
             "current": prog['current'], 
             "total": prog['total'],
