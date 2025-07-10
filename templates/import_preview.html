@@ -217,7 +217,18 @@
                     if (data.status === 'checking_duplicates') {
                         importProgressPercent.textContent = 'Checking for duplicates...';
                     } else if (data.status === 'importing') {
-                        importProgressPercent.textContent = percent + '%';
+                        let statusText = percent + '%';
+                        if (data.imported !== undefined) {
+                            statusText += ` (${data.imported} imported`;
+                            if (data.skipped !== undefined) {
+                                statusText += `, ${data.skipped} skipped`;
+                            }
+                            if (data.errors !== undefined) {
+                                statusText += `, ${data.errors} errors`;
+                            }
+                            statusText += ')';
+                        }
+                        importProgressPercent.textContent = statusText;
                     } else if (data.status === 'error') {
                         evtSource.close();
                         importProgressPercent.textContent = 'Error';
@@ -235,7 +246,20 @@
                     // Check if import is complete
                     if (data.status === 'completed' || data.current >= totalLeads) {
                         evtSource.close();
-                        importProgressPercent.textContent = '100% (Done)';
+                        
+                        // Show final statistics
+                        let finalText = '100% (Done)';
+                        if (data.imported !== undefined) {
+                            finalText += ` - ${data.imported} imported`;
+                            if (data.skipped !== undefined) {
+                                finalText += `, ${data.skipped} skipped`;
+                            }
+                            if (data.errors !== undefined) {
+                                finalText += `, ${data.errors} errors`;
+                            }
+                        }
+                        
+                        importProgressPercent.textContent = finalText;
                         importProgressBar.style.background = '#198754';
                         
                         // Show done message and start countdown

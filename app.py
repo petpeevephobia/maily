@@ -36,6 +36,9 @@ except Exception as e:
 # Global dictionary to store progress per session
 import_progress = {}
 
+# Store import tasks to prevent garbage collection
+import_tasks = {}
+
 @app.before_request
 def ensure_session_id():
     if 'import_session_id' not in session:
@@ -45,6 +48,10 @@ def ensure_session_id():
 def index():
     # Redirect to cold emails page as default
     return redirect('/cold-emails')
+
+@app.route('/health')
+def health():
+    return jsonify({'status': 'healthy', 'timestamp': datetime.now().isoformat()})
 
 @app.route('/cold-emails')
 def cold_emails():
@@ -834,10 +841,15 @@ def start_import():
     all_leads = list(csv_reader)
     total_leads = len(all_leads)
     
+    print(f"Starting import for {total_leads} leads")
+    
     # Start import in background thread
     def do_import():
-        import_progress[session_id] = {'current': 0, 'total': total_leads, 'status': 'starting'}
         try:
+            print(f"Import thread started for session {session_id}")
+            print(f"Total leads to process: {total_leads}")
+            import_progress[session_id] = {'current': 0, 'total': total_leads, 'status': 'starting'}
+            
             from notion_client import Client
             notion = Client(auth=notion_api_key)
             
@@ -845,22 +857,31 @@ def start_import():
             existing_emails = set()
             if skip_duplicates:
                 try:
+                    print(f"Checking for duplicates...")
                     import_progress[session_id]['status'] = 'checking_duplicates'
                     resp = notion.databases.query(database_id=notion_database_id)
                     for page in resp.get('results', []):
                         email = page.get('properties', {}).get('Email', {}).get('email', '')
                         if email:
                             existing_emails.add(email.lower())
+                    print(f"Found {len(existing_emails)} existing emails")
                 except Exception as e:
                     print(f"Warning: Could not fetch existing emails: {str(e)}")
             
             import_progress[session_id]['status'] = 'importing'
+            print(f"Starting import of {total_leads} leads")
             
-            # Process leads in batches to reduce memory usage
-            batch_size = 10
+            # Process leads in smaller batches to be more resilient
+            batch_size = 5  # Reduced batch size
+            imported_count = 0
+            skipped_count = 0
+            error_count = 0
+            
             for batch_start in range(0, len(all_leads), batch_size):
                 batch_end = min(batch_start + batch_size, len(all_leads))
                 batch = all_leads[batch_start:batch_end]
+                
+                print(f"Processing batch {batch_start//batch_size + 1} ({batch_start+1}-{batch_end})")
                 
                 for idx, row in enumerate(batch):
                     global_idx = batch_start + idx
@@ -880,11 +901,15 @@ def start_import():
                         
                         # Skip if required fields are empty
                         if not first_name or not last_name or not email:
+                            print(f"Skipping lead {global_idx + 1}: Missing required fields")
+                            error_count += 1
                             import_progress[session_id]['current'] = global_idx + 1
                             continue
                         
                         # Skip duplicates if enabled
                         if skip_duplicates and email.lower() in existing_emails:
+                            print(f"Skipping lead {global_idx + 1}: Duplicate email")
+                            skipped_count += 1
                             import_progress[session_id]['current'] = global_idx + 1
                             continue
                         
@@ -910,27 +935,47 @@ def start_import():
                         # Add to existing emails set to prevent duplicates within the same import
                         if skip_duplicates:
                             existing_emails.add(email.lower())
+                        
+                        imported_count += 1
+                        print(f"Imported lead {global_idx + 1}: {full_name} ({email})")
                             
                     except Exception as e:
                         print(f"Error importing lead {global_idx + 1}: {str(e)}")
+                        error_count += 1
                     
-                    # Update progress less frequently to reduce overhead
-                    if global_idx % 5 == 0 or global_idx == len(all_leads) - 1:
-                        import_progress[session_id]['current'] = global_idx + 1
+                    # Update progress more frequently
+                    import_progress[session_id]['current'] = global_idx + 1
+                    import_progress[session_id]['imported'] = imported_count
+                    import_progress[session_id]['skipped'] = skipped_count
+                    import_progress[session_id]['errors'] = error_count
                 
-                # Small delay between batches to prevent overwhelming the API
-                time.sleep(0.1)
+                # Longer delay between batches to be more gentle on Render
+                time.sleep(0.5)
             
+            print(f"Import completed: {imported_count} imported, {skipped_count} skipped, {error_count} errors")
             import_progress[session_id]['current'] = total_leads
             import_progress[session_id]['status'] = 'completed'
+            import_progress[session_id]['imported'] = imported_count
+            import_progress[session_id]['skipped'] = skipped_count
+            import_progress[session_id]['errors'] = error_count
             
         except Exception as e:
             print(f"Import error: {str(e)}")
             import_progress[session_id]['status'] = 'error'
             import_progress[session_id]['error'] = str(e)
     
-    threading.Thread(target=do_import, daemon=True).start()
+    # Use non-daemon thread to prevent it from being killed
+    import_thread = threading.Thread(target=do_import, daemon=False)
+    import_tasks[session_id] = import_thread
+    import_thread.start()
+    
     return '', 202
+
+@app.route('/import-status')
+def import_status():
+    session_id = session.get('import_session_id')
+    prog = import_progress.get(session_id, {'current': 0, 'total': 1, 'status': 'unknown'})
+    return jsonify(prog)
 
 @app.route('/import-progress')
 def import_progress_sse():
@@ -950,6 +995,12 @@ def import_progress_sse():
                 }
                 if prog.get('error'):
                     data['error'] = prog['error']
+                if prog.get('imported'):
+                    data['imported'] = prog['imported']
+                if prog.get('skipped'):
+                    data['skipped'] = prog['skipped']
+                if prog.get('errors'):
+                    data['errors'] = prog['errors']
                 
                 yield f"data: {json.dumps(data)}\n\n"
                 last_sent = prog['current']
@@ -957,6 +1008,9 @@ def import_progress_sse():
             
             # Check if import is complete or failed
             if prog.get('status') in ['completed', 'error'] or prog['current'] >= prog['total']:
+                # Clean up completed task
+                if session_id in import_tasks:
+                    del import_tasks[session_id]
                 break
             
             time.sleep(0.5)  # Reduced frequency to prevent overwhelming the client
@@ -970,6 +1024,12 @@ def import_progress_sse():
         }
         if prog.get('error'):
             data['error'] = prog['error']
+        if prog.get('imported'):
+            data['imported'] = prog['imported']
+        if prog.get('skipped'):
+            data['skipped'] = prog['skipped']
+        if prog.get('errors'):
+            data['errors'] = prog['errors']
         
         yield f"data: {json.dumps(data)}\n\n"
     
