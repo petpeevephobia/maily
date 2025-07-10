@@ -818,6 +818,7 @@ def start_import():
     notion_database_id = request.form.get('notion_database_id')
     google_sheets_url = request.form.get('google_sheets_url')
     skip_duplicates = 'skip_duplicates' in request.form
+    
     # Parse Google Sheet
     import re, requests, csv, io
     spreadsheet_id_match = re.search(r'/spreadsheets/d/([a-zA-Z0-9-_]+)', google_sheets_url)
@@ -832,67 +833,102 @@ def start_import():
     csv_reader = csv.DictReader(io.StringIO(csv_content))
     all_leads = list(csv_reader)
     total_leads = len(all_leads)
+    
     # Start import in background thread
     def do_import():
-        import_progress[session_id] = {'current': 0, 'total': total_leads}
+        import_progress[session_id] = {'current': 0, 'total': total_leads, 'status': 'starting'}
         try:
             from notion_client import Client
             notion = Client(auth=notion_api_key)
+            
             # Get existing emails if skip_duplicates is enabled
             existing_emails = set()
             if skip_duplicates:
                 try:
+                    import_progress[session_id]['status'] = 'checking_duplicates'
                     resp = notion.databases.query(database_id=notion_database_id)
                     for page in resp.get('results', []):
                         email = page.get('properties', {}).get('Email', {}).get('email', '')
                         if email:
                             existing_emails.add(email.lower())
-                except Exception:
-                    pass
-            for idx, row in enumerate(all_leads):
-                # ... mapping logic as before ...
-                first_name = row.get('First Name', '').strip()
-                last_name = row.get('Last Name', '').strip()
-                email = row.get('E-mail', '').strip()
-                company_phone = row.get('Company Phone Number', '').strip()
-                company_name = row.get('Company Name', '').strip()
-                website = row.get('Website', '').strip()
-                linkedin = row.get('Linkedin', '').strip()
-                title = row.get('Title', '').strip()
-                location = row.get('Location', '').strip()
-                category = row.get('Category', '').strip()
-                funded_year = row.get('Funded Year', '').strip()
-                if not first_name or not last_name or not email:
-                    import_progress[session_id]['current'] = idx + 1
-                    continue
-                if skip_duplicates and email.lower() in existing_emails:
-                    import_progress[session_id]['current'] = idx + 1
-                    continue
-                full_name = f"{first_name} {last_name}".strip()
-                properties = {
-                    "Name": {"title": [{"text": {"content": full_name}}]},
-                    "Email": {"email": email},
-                    "Phone": {"phone_number": company_phone} if company_phone else None,
-                    "Title": {"rich_text": [{"text": {"content": title}}]} if title else None,
-                    "Organisation": {"rich_text": [{"text": {"content": company_name}}]} if company_name else None,
-                    "Website": {"url": website if website.startswith(('http://', 'https://')) else f'https://{website}'} if website else None,
-                    "Social Media": {"url": linkedin if linkedin.startswith(('http://', 'https://')) else f'https://{linkedin}'} if linkedin else None,
-                    "Location": {"rich_text": [{"text": {"content": location}}]} if location else None,
-                    "Industry": {"rich_text": [{"text": {"content": category}}]} if category else None,
-                    "Lead Source": {"select": {"name": "Cold Outreach"}},
-                    "Status": {"status": {"name": "Not contacted"}}
-                }
-                properties = {k: v for k, v in properties.items() if v is not None}
-                try:
-                    notion.pages.create(parent={"database_id": notion_database_id}, properties=properties)
-                    if skip_duplicates:
-                        existing_emails.add(email.lower())
-                except Exception:
-                    pass
-                import_progress[session_id]['current'] = idx + 1
+                except Exception as e:
+                    print(f"Warning: Could not fetch existing emails: {str(e)}")
+            
+            import_progress[session_id]['status'] = 'importing'
+            
+            # Process leads in batches to reduce memory usage
+            batch_size = 10
+            for batch_start in range(0, len(all_leads), batch_size):
+                batch_end = min(batch_start + batch_size, len(all_leads))
+                batch = all_leads[batch_start:batch_end]
+                
+                for idx, row in enumerate(batch):
+                    global_idx = batch_start + idx
+                    
+                    try:
+                        first_name = row.get('First Name', '').strip()
+                        last_name = row.get('Last Name', '').strip()
+                        email = row.get('E-mail', '').strip()
+                        company_phone = row.get('Company Phone Number', '').strip()
+                        company_name = row.get('Company Name', '').strip()
+                        website = row.get('Website', '').strip()
+                        linkedin = row.get('Linkedin', '').strip()
+                        title = row.get('Title', '').strip()
+                        location = row.get('Location', '').strip()
+                        category = row.get('Category', '').strip()
+                        funded_year = row.get('Funded Year', '').strip()
+                        
+                        # Skip if required fields are empty
+                        if not first_name or not last_name or not email:
+                            import_progress[session_id]['current'] = global_idx + 1
+                            continue
+                        
+                        # Skip duplicates if enabled
+                        if skip_duplicates and email.lower() in existing_emails:
+                            import_progress[session_id]['current'] = global_idx + 1
+                            continue
+                        
+                        full_name = f"{first_name} {last_name}".strip()
+                        properties = {
+                            "Name": {"title": [{"text": {"content": full_name}}]},
+                            "Email": {"email": email},
+                            "Phone": {"phone_number": company_phone} if company_phone else None,
+                            "Title": {"rich_text": [{"text": {"content": title}}]} if title else None,
+                            "Organisation": {"rich_text": [{"text": {"content": company_name}}]} if company_name else None,
+                            "Website": {"url": website if website.startswith(('http://', 'https://')) else f'https://{website}'} if website else None,
+                            "Social Media": {"url": linkedin if linkedin.startswith(('http://', 'https://')) else f'https://{linkedin}'} if linkedin else None,
+                            "Location": {"rich_text": [{"text": {"content": location}}]} if location else None,
+                            "Industry": {"rich_text": [{"text": {"content": category}}]} if category else None,
+                            "Lead Source": {"select": {"name": "Cold Outreach"}},
+                            "Status": {"status": {"name": "Not contacted"}}
+                        }
+                        properties = {k: v for k, v in properties.items() if v is not None}
+                        
+                        # Create the page
+                        notion.pages.create(parent={"database_id": notion_database_id}, properties=properties)
+                        
+                        # Add to existing emails set to prevent duplicates within the same import
+                        if skip_duplicates:
+                            existing_emails.add(email.lower())
+                            
+                    except Exception as e:
+                        print(f"Error importing lead {global_idx + 1}: {str(e)}")
+                    
+                    # Update progress less frequently to reduce overhead
+                    if global_idx % 5 == 0 or global_idx == len(all_leads) - 1:
+                        import_progress[session_id]['current'] = global_idx + 1
+                
+                # Small delay between batches to prevent overwhelming the API
+                time.sleep(0.1)
+            
             import_progress[session_id]['current'] = total_leads
-        except Exception:
-            import_progress[session_id]['current'] = total_leads
+            import_progress[session_id]['status'] = 'completed'
+            
+        except Exception as e:
+            print(f"Import error: {str(e)}")
+            import_progress[session_id]['status'] = 'error'
+            import_progress[session_id]['error'] = str(e)
+    
     threading.Thread(target=do_import, daemon=True).start()
     return '', 202
 
@@ -901,14 +937,42 @@ def import_progress_sse():
     session_id = session.get('import_session_id')
     def event_stream():
         last_sent = -1
+        last_status = None
         while True:
-            prog = import_progress.get(session_id, {'current': 0, 'total': 1})
-            if prog['current'] != last_sent:
-                yield f"data: {{\"current\": {prog['current']}, \"total\": {prog['total']}}}\n\n"
+            prog = import_progress.get(session_id, {'current': 0, 'total': 1, 'status': 'unknown'})
+            
+            # Send progress update if changed
+            if prog['current'] != last_sent or prog.get('status') != last_status:
+                data = {
+                    "current": prog['current'], 
+                    "total": prog['total'],
+                    "status": prog.get('status', 'unknown')
+                }
+                if prog.get('error'):
+                    data['error'] = prog['error']
+                
+                yield f"data: {json.dumps(data)}\n\n"
                 last_sent = prog['current']
-            if prog['current'] >= prog['total']:
+                last_status = prog.get('status')
+            
+            # Check if import is complete or failed
+            if prog.get('status') in ['completed', 'error'] or prog['current'] >= prog['total']:
                 break
-            time.sleep(0.2)
+            
+            time.sleep(0.5)  # Reduced frequency to prevent overwhelming the client
+        
+        # Send final update
+        prog = import_progress.get(session_id, {'current': 0, 'total': 1, 'status': 'unknown'})
+        data = {
+            "current": prog['current'], 
+            "total": prog['total'],
+            "status": prog.get('status', 'completed')
+        }
+        if prog.get('error'):
+            data['error'] = prog['error']
+        
+        yield f"data: {json.dumps(data)}\n\n"
+    
     return Response(event_stream(), mimetype='text/event-stream')
 
 # Add nl2br filter

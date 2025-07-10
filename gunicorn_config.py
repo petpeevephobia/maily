@@ -9,7 +9,7 @@ backlog = 2048
 workers = 1  # Use only 1 worker to minimize memory usage
 worker_class = 'sync'
 worker_connections = 1000
-timeout = 30
+timeout = 600  # Increased from 30 to 300 seconds (5 minutes)
 keepalive = 2
 
 # Logging

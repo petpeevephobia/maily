@@ -208,16 +208,42 @@
                 evtSource.onmessage = function(event) {
                     const data = JSON.parse(event.data);
                     const percent = Math.round((data.current / totalLeads) * 100);
+                    
+                    // Update progress bar
                     importProgressBar.style.width = percent + '%';
                     importProgressPercent.textContent = percent + '%';
-                    if (data.current >= totalLeads) {
+                    
+                    // Handle different statuses
+                    if (data.status === 'checking_duplicates') {
+                        importProgressPercent.textContent = 'Checking for duplicates...';
+                    } else if (data.status === 'importing') {
+                        importProgressPercent.textContent = percent + '%';
+                    } else if (data.status === 'error') {
+                        evtSource.close();
+                        importProgressPercent.textContent = 'Error';
+                        importProgressBar.style.background = '#dc3545';
+                        clearInterval(timerInterval);
+                        importWarning.style.display = 'none';
+                        importInProgress = false;
+                        
+                        // Show error message
+                        const errorMsg = data.error || 'An error occurred during import';
+                        alert('Import failed: ' + errorMsg);
+                        return;
+                    }
+                    
+                    // Check if import is complete
+                    if (data.status === 'completed' || data.current >= totalLeads) {
                         evtSource.close();
                         importProgressPercent.textContent = '100% (Done)';
+                        importProgressBar.style.background = '#198754';
+                        
                         // Show done message and start countdown
                         importDoneMsg.style.display = '';
                         clearInterval(timerInterval);
                         importWarning.style.display = 'none';
                         importInProgress = false;
+                        
                         let seconds = 5;
                         countdownSpan.textContent = seconds;
                         const interval = setInterval(function() {
@@ -230,12 +256,15 @@
                         }, 1000);
                     }
                 };
+                
                 evtSource.onerror = function() {
                     evtSource.close();
-                    importProgressPercent.textContent = 'Error';
+                    importProgressPercent.textContent = 'Connection Error';
+                    importProgressBar.style.background = '#dc3545';
                     clearInterval(timerInterval);
                     importWarning.style.display = 'none';
                     importInProgress = false;
+                    alert('Lost connection to server. The import may still be running in the background.');
                 };
             }
 
