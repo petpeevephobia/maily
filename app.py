@@ -1376,6 +1376,13 @@ def import_progress_sse():
 
 @app.route('/import-chunk', methods=['POST'])
 def import_chunk():
+    print("\n==== /import-chunk CALLED ====")
+    print(f"notion_api_key: {request.form.get('notion_api_key')}")
+    print(f"notion_database_id: {request.form.get('notion_database_id')}")
+    print(f"google_sheets_url: {request.form.get('google_sheets_url')}")
+    print(f"skip_duplicates: {'skip_duplicates' in request.form}")
+    print(f"start: {request.form.get('start', 0)}")
+    print(f"count: {request.form.get('count', 10)}")
     notion_api_key = request.form.get('notion_api_key')
     notion_database_id = request.form.get('notion_database_id')
     google_sheets_url = request.form.get('google_sheets_url')
