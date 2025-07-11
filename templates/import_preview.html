@@ -121,27 +121,24 @@
                             <div style="font-weight: normal; color: #198754; font-size: 1rem;">Import complete! Redirecting in <span id="countdown">5</span> seconds...</div>
                         </div>
 
-                        <form method="post" action="/import-leads" id="importForm">
-                            <input type="hidden" name="action" value="import">
+                        <form method="post" action="/import-leads" id="importChunkForm">
                             <input type="hidden" name="notion_api_key" value="{{ config.notion_api_key }}">
                             <input type="hidden" name="notion_database_id" value="{{ config.notion_database_id }}">
                             <input type="hidden" name="google_sheets_url" value="{{ config.google_sheets_url }}">
                             {% if config.skip_duplicates %}
                             <input type="hidden" name="skip_duplicates" value="on">
                             {% endif %}
-                            
+                            <input type="hidden" name="start" id="chunkStart" value="0">
+                            <input type="hidden" name="count" id="chunkCount" value="10">
                             <div class="d-flex gap-3">
-                                <button type="submit" name="action" value="import" id="importLeadsBtn" class="btn btn-success" 
-                                        style="background-color: #198754; padding: 0.75rem 1.5rem; font-weight: 500; border-radius: 0.5rem; box-shadow: 0 2px 4px rgba(0,0,0,0.1); transition: all 0.2s ease-in-out; flex: 1; cursor: pointer;">
-                                    <span class="btn-text">Import {{ total_rows }} Leads</span>
+                                <button type="submit" id="importChunkBtn" class="btn btn-success" style="background-color: #198754; padding: 0.75rem 1.5rem; font-weight: 500; border-radius: 0.5rem; box-shadow: 0 2px 4px rgba(0,0,0,0.1); transition: all 0.2s ease-in-out; flex: 1; cursor: pointer;">
+                                    <span class="btn-text">Import Next 10</span>
                                     <span class="btn-loading d-none">
                                         <span class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>
                                         Importing...
                                     </span>
                                 </button>
-                                <a href="/import-leads" class="btn btn-outline-secondary" style="flex: 1;">
-                                    Cancel
-                                </a>
+                                <a href="/import-leads" class="btn btn-outline-secondary" style="flex: 1;">Cancel</a>
                             </div>
                         </form>
                     </div>
@@ -152,154 +149,64 @@
 
     <script>
         document.addEventListener('DOMContentLoaded', function() {
-            const importForm = document.getElementById('importForm');
-            const importLeadsBtn = document.getElementById('importLeadsBtn');
+            const importChunkForm = document.getElementById('importChunkForm');
+            const importChunkBtn = document.getElementById('importChunkBtn');
+            const chunkStartInput = document.getElementById('chunkStart');
+            const chunkCountInput = document.getElementById('chunkCount');
             const importProgressContainer = document.getElementById('importProgressContainer');
             const importProgressBar = document.getElementById('importProgressBar');
             const importProgressPercent = document.getElementById('importProgressPercent');
-            const importDoneMsg = document.getElementById('importDoneMsg');
-            const countdownSpan = document.getElementById('countdown');
-            const importTimer = document.getElementById('importTimer');
-            const elapsedTimeSpan = document.getElementById('elapsedTime');
-            const importWarning = document.getElementById('importWarning');
             let totalLeads = {{ total_rows }};
-            let timerInterval = null;
-            let importInProgress = false;
-
-            if (importForm && importLeadsBtn) {
-                importForm.addEventListener('submit', function(e) {
-                    if (e.submitter && e.submitter.value === 'import') {
-                        e.preventDefault();
-                        // Hide form/buttons
-                        importForm.style.display = 'none';
-                        // Show progress bar, timer, and warning
-                        importProgressContainer.style.display = '';
-                        importTimer.style.display = '';
-                        importWarning.style.display = '';
-                        importInProgress = true;
-                        // Start stopwatch
-                        let secondsElapsed = 0;
-                        elapsedTimeSpan.textContent = secondsElapsed;
-                        timerInterval = setInterval(function() {
-                            secondsElapsed++;
-                            elapsedTimeSpan.textContent = secondsElapsed;
-                        }, 1000);
-                        // Start import via POST
-                        fetch('/start-import', {
-                            method: 'POST',
-                            body: new FormData(importForm)
-                        }).then(function(response) {
-                            if (response.ok) {
-                                // Start listening for SSE
-                                listenForImportProgress();
-                            } else {
-                                alert('Failed to start import.');
-                                clearInterval(timerInterval);
-                                importWarning.style.display = 'none';
-                                importInProgress = false;
-                            }
-                        });
-                    }
+            let imported = 0;
+            let skipped = 0;
+            let errors = 0;
+            let currentStart = 0;
+            let chunkSize = 10;
+            function updateProgressBar() {
+                const percent = Math.round((imported / totalLeads) * 100);
+                importProgressBar.style.width = percent + '%';
+                importProgressPercent.textContent = percent + '% (' + imported + ' imported, ' + skipped + ' skipped, ' + errors + ' errors)';
+            }
+            if (importChunkForm && importChunkBtn) {
+                importChunkForm.addEventListener('submit', function(e) {
+                    e.preventDefault();
+                    importChunkBtn.disabled = true;
+                    importChunkBtn.querySelector('.btn-text').classList.add('d-none');
+                    importChunkBtn.querySelector('.btn-loading').classList.remove('d-none');
+                    importProgressContainer.style.display = '';
+                    fetch('/import-chunk', {
+                        method: 'POST',
+                        body: new FormData(importChunkForm)
+                    }).then(res => res.json()).then(data => {
+                        importChunkBtn.disabled = false;
+                        importChunkBtn.querySelector('.btn-text').classList.remove('d-none');
+                        importChunkBtn.querySelector('.btn-loading').classList.add('d-none');
+                        if (data.error) {
+                            alert('Import error: ' + data.error);
+                            return;
+                        }
+                        imported += data.imported;
+                        skipped += data.skipped;
+                        errors += data.errors;
+                        currentStart = data.start + data.count;
+                        updateProgressBar();
+                        if (data.next_start !== null) {
+                            chunkStartInput.value = data.next_start;
+                            importChunkBtn.textContent = 'Import Next 10';
+                            importChunkBtn.disabled = false;
+                        } else {
+                            importChunkBtn.textContent = 'All Leads Imported!';
+                            importChunkBtn.disabled = true;
+                        }
+                    }).catch(err => {
+                        importChunkBtn.disabled = false;
+                        importChunkBtn.querySelector('.btn-text').classList.remove('d-none');
+                        importChunkBtn.querySelector('.btn-loading').classList.add('d-none');
+                        alert('Import failed: ' + err);
+                    });
                 });
             }
-
-            function listenForImportProgress() {
-                const evtSource = new EventSource('/import-progress');
-                evtSource.onmessage = function(event) {
-                    const data = JSON.parse(event.data);
-                    const percent = Math.round((data.current / totalLeads) * 100);
-                    
-                    // Update progress bar
-                    importProgressBar.style.width = percent + '%';
-                    importProgressPercent.textContent = percent + '%';
-                    
-                    // Handle different statuses
-                    if (data.status === 'checking_duplicates') {
-                        importProgressPercent.textContent = 'Checking for duplicates...';
-                    } else if (data.status === 'importing') {
-                        let statusText = percent + '%';
-                        if (data.imported !== undefined) {
-                            statusText += ` (${data.imported} imported`;
-                            if (data.skipped !== undefined) {
-                                statusText += `, ${data.skipped} skipped`;
-                            }
-                            if (data.errors !== undefined) {
-                                statusText += `, ${data.errors} errors`;
-                            }
-                            statusText += ')';
-                        }
-                        importProgressPercent.textContent = statusText;
-                    } else if (data.status === 'error') {
-                        evtSource.close();
-                        importProgressPercent.textContent = 'Error';
-                        importProgressBar.style.background = '#dc3545';
-                        clearInterval(timerInterval);
-                        importWarning.style.display = 'none';
-                        importInProgress = false;
-                        
-                        // Show error message
-                        const errorMsg = data.error || 'An error occurred during import';
-                        alert('Import failed: ' + errorMsg);
-                        return;
-                    }
-                    
-                    // Check if import is complete
-                    if (data.status === 'completed' || data.current >= totalLeads) {
-                        evtSource.close();
-                        
-                        // Show final statistics
-                        let finalText = '100% (Done)';
-                        if (data.imported !== undefined) {
-                            finalText += ` - ${data.imported} imported`;
-                            if (data.skipped !== undefined) {
-                                finalText += `, ${data.skipped} skipped`;
-                            }
-                            if (data.errors !== undefined) {
-                                finalText += `, ${data.errors} errors`;
-                            }
-                        }
-                        
-                        importProgressPercent.textContent = finalText;
-                        importProgressBar.style.background = '#198754';
-                        
-                        // Show done message and start countdown
-                        importDoneMsg.style.display = '';
-                        clearInterval(timerInterval);
-                        importWarning.style.display = 'none';
-                        importInProgress = false;
-                        
-                        let seconds = 5;
-                        countdownSpan.textContent = seconds;
-                        const interval = setInterval(function() {
-                            seconds--;
-                            countdownSpan.textContent = seconds;
-                            if (seconds <= 0) {
-                                clearInterval(interval);
-                                window.location.href = '/';
-                            }
-                        }, 1000);
-                    }
-                };
-                
-                evtSource.onerror = function() {
-                    evtSource.close();
-                    importProgressPercent.textContent = 'Connection Error';
-                    importProgressBar.style.background = '#dc3545';
-                    clearInterval(timerInterval);
-                    importWarning.style.display = 'none';
-                    importInProgress = false;
-                    alert('Lost connection to server. The import may still be running in the background.');
-                };
-            }
-
-            // Warn user if they try to close the tab during import
-            window.addEventListener('beforeunload', function(e) {
-                if (importInProgress) {
-                    e.preventDefault();
-                    e.returnValue = 'Leads are still being imported. Are you sure you want to leave?';
-                    return 'Leads are still being imported. Are you sure you want to leave?';
-                }
-            });
+            updateProgressBar();
         });
     </script>
 </body>

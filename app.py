@@ -1374,6 +1374,113 @@ def import_progress_sse():
     
     return Response(event_stream(), mimetype='text/event-stream')
 
+@app.route('/import-chunk', methods=['POST'])
+def import_chunk():
+    notion_api_key = request.form.get('notion_api_key')
+    notion_database_id = request.form.get('notion_database_id')
+    google_sheets_url = request.form.get('google_sheets_url')
+    skip_duplicates = 'skip_duplicates' in request.form
+    start = int(request.form.get('start', 0))
+    count = int(request.form.get('count', 10))
+
+    import re
+    spreadsheet_id_match = re.search(r'/spreadsheets/d/([a-zA-Z0-9-_]+)', google_sheets_url)
+    if not spreadsheet_id_match:
+        return jsonify({'error': 'Invalid Google Sheets URL'}), 400
+    spreadsheet_id = spreadsheet_id_match.group(1)
+    csv_url = f"https://docs.google.com/spreadsheets/d/{spreadsheet_id}/gviz/tq?tqx=out:csv"
+
+    # Get total leads
+    try:
+        total_leads = count_leads_in_csv(csv_url)
+    except Exception as e:
+        return jsonify({'error': f'Could not access Google Sheet: {str(e)}'}), 400
+
+    # Get existing emails if skip_duplicates is enabled
+    from notion_client import Client
+    notion = Client(auth=notion_api_key)
+    existing_emails = set()
+    if skip_duplicates:
+        try:
+            resp = notion.databases.query(database_id=notion_database_id)
+            for page in resp.get('results', []):
+                email = page.get('properties', {}).get('Email', {}).get('email', '')
+                if email:
+                    existing_emails.add(email.lower())
+        except Exception as e:
+            print(f"Warning: Could not fetch existing emails: {str(e)}")
+
+    # Process only the chunk
+    imported_count = 0
+    skipped_count = 0
+    error_count = 0
+    processed = 0
+    leads_processed = 0
+    for idx, row in enumerate(stream_leads_from_csv(csv_url)):
+        if idx < start:
+            continue
+        if leads_processed >= count:
+            break
+        try:
+            first_name = row.get('First Name', '').strip()
+            last_name = row.get('Last Name', '').strip()
+            email = row.get('E-mail', '').strip()
+            company_phone = row.get('Company Phone Number', '').strip()
+            company_name = row.get('Company Name', '').strip()
+            website = row.get('Website', '').strip()
+            linkedin = row.get('Linkedin', '').strip()
+            title = row.get('Title', '').strip()
+            location = row.get('Location', '').strip()
+            category = row.get('Category', '').strip()
+            # Skip if required fields are empty
+            if not first_name or not last_name or not email:
+                error_count += 1
+                continue
+            # Skip duplicates if enabled
+            if skip_duplicates and email.lower() in existing_emails:
+                skipped_count += 1
+                continue
+            full_name = f"{first_name} {last_name}".strip()
+            properties = {
+                "Name": {"title": [{"text": {"content": full_name}}]},
+                "Email": {"email": email},
+                "Lead Source": {"select": {"name": "Cold Outreach"}},
+                "Status": {"status": {"name": "Not contacted"}}
+            }
+            if company_phone:
+                properties["Phone"] = {"phone_number": company_phone}
+            if title:
+                properties["Title"] = {"rich_text": [{"text": {"content": title}}]}
+            if company_name:
+                properties["Organisation"] = {"rich_text": [{"text": {"content": company_name}}]}
+            if website:
+                website_url = website if website.startswith(('http://', 'https://')) else f'https://{website}'
+                properties["Website"] = {"url": website_url}
+            if linkedin:
+                linkedin_url = linkedin if linkedin.startswith(('http://', 'https://')) else f'https://{linkedin}'
+                properties["Social Media"] = {"url": linkedin_url}
+            if location:
+                properties["Location"] = {"rich_text": [{"text": {"content": location}}]}
+            if category:
+                properties["Industry"] = {"rich_text": [{"text": {"content": category}}]}
+            notion.pages.create(parent={"database_id": notion_database_id}, properties=properties)
+            if skip_duplicates:
+                existing_emails.add(email.lower())
+            imported_count += 1
+        except Exception as e:
+            print(f"Error importing lead {first_name} {last_name}: {str(e)}")
+            error_count += 1
+        leads_processed += 1
+    return jsonify({
+        'imported': imported_count,
+        'skipped': skipped_count,
+        'errors': error_count,
+        'start': start,
+        'count': leads_processed,
+        'total': total_leads,
+        'next_start': start + leads_processed if (start + leads_processed) < total_leads else None
+    })
+
 # Add nl2br filter
 @app.template_filter('nl2br')
 def nl2br(value):
