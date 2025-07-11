@@ -9,8 +9,10 @@ backlog = 2048
 workers = 1  # Use only 1 worker to minimize memory usage
 worker_class = 'sync'
 worker_connections = 1000
-timeout = 600  # Increased from 30 to 300 seconds (5 minutes)
+timeout = 900  # Increased to 15 minutes for large imports
 keepalive = 2
+max_requests = 100  # Restart worker after 100 requests to prevent memory leaks
+max_requests_jitter = 10
 
 # Logging
 accesslog = '-'

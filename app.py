@@ -11,6 +11,8 @@ from datetime import datetime
 import threading
 import time
 import uuid
+import gc
+import psutil
 
 app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY', 'changeme')
@@ -42,6 +44,14 @@ import_tasks = {}
 # File-based progress storage for recovery after restarts
 import os
 
+def get_memory_usage():
+    """Get current memory usage in MB"""
+    try:
+        process = psutil.Process(os.getpid())
+        return process.memory_info().rss / 1024 / 1024
+    except:
+        return 0
+
 def save_progress(session_id, progress_data):
     """Save progress to file for recovery after restarts"""
     try:
@@ -70,6 +80,19 @@ def cleanup_progress_file(session_id):
             os.remove(progress_file)
     except Exception as e:
         print(f"Error cleaning up progress file: {str(e)}")
+
+def stream_leads_from_csv(csv_url):
+    """Stream leads from CSV without loading all into memory"""
+    import requests, csv, io
+    response = requests.get(csv_url)
+    if response.status_code != 200:
+        raise Exception('Could not access Google Sheet')
+    
+    csv_content = response.text
+    csv_reader = csv.DictReader(io.StringIO(csv_content))
+    
+    for row in csv_reader:
+        yield row
 
 @app.before_request
 def ensure_session_id():
@@ -859,7 +882,7 @@ def start_import():
     skip_duplicates = 'skip_duplicates' in request.form
     
     # Parse Google Sheet
-    import re, requests, csv, io
+    import re, requests
     spreadsheet_id_match = re.search(r'/spreadsheets/d/([a-zA-Z0-9-_]+)', google_sheets_url)
     if not spreadsheet_id_match:
         return 'Invalid Google Sheets URL', 400
@@ -868,10 +891,9 @@ def start_import():
     response = requests.get(csv_url)
     if response.status_code != 200:
         return 'Could not access Google Sheet', 400
-    csv_content = response.text
-    csv_reader = csv.DictReader(io.StringIO(csv_content))
-    all_leads = list(csv_reader)
-    total_leads = len(all_leads)
+    
+    # Count total leads without loading all into memory
+    total_leads = len(response.text.split('\n')) - 1  # Subtract 1 for header
     
     print(f"Starting import for {total_leads} leads")
     
@@ -879,7 +901,7 @@ def start_import():
     def do_import():
         try:
             print(f"Import thread started for session {session_id}")
-            print(f"Total leads to process: {total_leads}")
+            print(f"Memory usage at start: {get_memory_usage():.1f} MB")
             
             # Initialize progress
             progress_data = {'current': 0, 'total': total_leads, 'status': 'starting'}
@@ -912,94 +934,93 @@ def start_import():
             save_progress(session_id, progress_data)
             print(f"Starting import of {total_leads} leads")
             
-            # Process leads in smaller batches to be more resilient
-            batch_size = 3  # Even smaller batch size for Render
+            # Process leads one by one to minimize memory usage
             imported_count = 0
             skipped_count = 0
             error_count = 0
             
-            for batch_start in range(0, len(all_leads), batch_size):
-                batch_end = min(batch_start + batch_size, len(all_leads))
-                batch = all_leads[batch_start:batch_end]
-                
-                print(f"Processing batch {batch_start//batch_size + 1} ({batch_start+1}-{batch_end})")
-                
-                for idx, row in enumerate(batch):
-                    global_idx = batch_start + idx
+            # Stream leads from CSV instead of loading all into memory
+            csv_url = f"https://docs.google.com/spreadsheets/d/{spreadsheet_id}/gviz/tq?tqx=out:csv"
+            
+            for lead_idx, row in enumerate(stream_leads_from_csv(csv_url)):
+                try:
+                    first_name = row.get('First Name', '').strip()
+                    last_name = row.get('Last Name', '').strip()
+                    email = row.get('E-mail', '').strip()
+                    company_phone = row.get('Company Phone Number', '').strip()
+                    company_name = row.get('Company Name', '').strip()
+                    website = row.get('Website', '').strip()
+                    linkedin = row.get('Linkedin', '').strip()
+                    title = row.get('Title', '').strip()
+                    location = row.get('Location', '').strip()
+                    category = row.get('Category', '').strip()
+                    funded_year = row.get('Funded Year', '').strip()
                     
-                    try:
-                        first_name = row.get('First Name', '').strip()
-                        last_name = row.get('Last Name', '').strip()
-                        email = row.get('E-mail', '').strip()
-                        company_phone = row.get('Company Phone Number', '').strip()
-                        company_name = row.get('Company Name', '').strip()
-                        website = row.get('Website', '').strip()
-                        linkedin = row.get('Linkedin', '').strip()
-                        title = row.get('Title', '').strip()
-                        location = row.get('Location', '').strip()
-                        category = row.get('Category', '').strip()
-                        funded_year = row.get('Funded Year', '').strip()
-                        
-                        # Skip if required fields are empty
-                        if not first_name or not last_name or not email:
-                            print(f"Skipping lead {global_idx + 1}: Missing required fields")
-                            error_count += 1
-                            progress_data['current'] = global_idx + 1
-                            progress_data['errors'] = error_count
-                            import_progress[session_id] = progress_data
-                            save_progress(session_id, progress_data)
-                            continue
-                        
-                        # Skip duplicates if enabled
-                        if skip_duplicates and email.lower() in existing_emails:
-                            print(f"Skipping lead {global_idx + 1}: Duplicate email")
-                            skipped_count += 1
-                            progress_data['current'] = global_idx + 1
-                            progress_data['skipped'] = skipped_count
-                            import_progress[session_id] = progress_data
-                            save_progress(session_id, progress_data)
-                            continue
-                        
-                        full_name = f"{first_name} {last_name}".strip()
-                        properties = {
-                            "Name": {"title": [{"text": {"content": full_name}}]},
-                            "Email": {"email": email},
-                            "Phone": {"phone_number": company_phone} if company_phone else None,
-                            "Title": {"rich_text": [{"text": {"content": title}}]} if title else None,
-                            "Organisation": {"rich_text": [{"text": {"content": company_name}}]} if company_name else None,
-                            "Website": {"url": website if website.startswith(('http://', 'https://')) else f'https://{website}'} if website else None,
-                            "Social Media": {"url": linkedin if linkedin.startswith(('http://', 'https://')) else f'https://{linkedin}'} if linkedin else None,
-                            "Location": {"rich_text": [{"text": {"content": location}}]} if location else None,
-                            "Industry": {"rich_text": [{"text": {"content": category}}]} if category else None,
-                            "Lead Source": {"select": {"name": "Cold Outreach"}},
-                            "Status": {"status": {"name": "Not contacted"}}
-                        }
-                        properties = {k: v for k, v in properties.items() if v is not None}
-                        
-                        # Create the page
-                        notion.pages.create(parent={"database_id": notion_database_id}, properties=properties)
-                        
-                        # Add to existing emails set to prevent duplicates within the same import
-                        if skip_duplicates:
-                            existing_emails.add(email.lower())
-                        
-                        imported_count += 1
-                        print(f"Imported lead {global_idx + 1}: {full_name} ({email})")
-                            
-                    except Exception as e:
-                        print(f"Error importing lead {global_idx + 1}: {str(e)}")
+                    # Skip if required fields are empty
+                    if not first_name or not last_name or not email:
+                        print(f"Skipping lead {lead_idx + 1}: Missing required fields")
                         error_count += 1
+                        progress_data['current'] = lead_idx + 1
+                        progress_data['errors'] = error_count
+                        import_progress[session_id] = progress_data
+                        save_progress(session_id, progress_data)
+                        continue
                     
-                    # Update progress more frequently
-                    progress_data['current'] = global_idx + 1
-                    progress_data['imported'] = imported_count
-                    progress_data['skipped'] = skipped_count
-                    progress_data['errors'] = error_count
-                    import_progress[session_id] = progress_data
-                    save_progress(session_id, progress_data)
+                    # Skip duplicates if enabled
+                    if skip_duplicates and email.lower() in existing_emails:
+                        print(f"Skipping lead {lead_idx + 1}: Duplicate email")
+                        skipped_count += 1
+                        progress_data['current'] = lead_idx + 1
+                        progress_data['skipped'] = skipped_count
+                        import_progress[session_id] = progress_data
+                        save_progress(session_id, progress_data)
+                        continue
+                    
+                    full_name = f"{first_name} {last_name}".strip()
+                    properties = {
+                        "Name": {"title": [{"text": {"content": full_name}}]},
+                        "Email": {"email": email},
+                        "Phone": {"phone_number": company_phone} if company_phone else None,
+                        "Title": {"rich_text": [{"text": {"content": title}}]} if title else None,
+                        "Organisation": {"rich_text": [{"text": {"content": company_name}}]} if company_name else None,
+                        "Website": {"url": website if website.startswith(('http://', 'https://')) else f'https://{website}'} if website else None,
+                        "Social Media": {"url": linkedin if linkedin.startswith(('http://', 'https://')) else f'https://{linkedin}'} if linkedin else None,
+                        "Location": {"rich_text": [{"text": {"content": location}}]} if location else None,
+                        "Industry": {"rich_text": [{"text": {"content": category}}]} if category else None,
+                        "Lead Source": {"select": {"name": "Cold Outreach"}},
+                        "Status": {"status": {"name": "Not contacted"}}
+                    }
+                    properties = {k: v for k, v in properties.items() if v is not None}
+                    
+                    # Create the page
+                    notion.pages.create(parent={"database_id": notion_database_id}, properties=properties)
+                    
+                    # Add to existing emails set to prevent duplicates within the same import
+                    if skip_duplicates:
+                        existing_emails.add(email.lower())
+                    
+                    imported_count += 1
+                    print(f"Imported lead {lead_idx + 1}: {full_name} ({email})")
+                        
+                except Exception as e:
+                    print(f"Error importing lead {lead_idx + 1}: {str(e)}")
+                    error_count += 1
                 
-                # Longer delay between batches to be more gentle on Render
-                time.sleep(1.0)  # Increased delay
+                # Update progress after each lead
+                progress_data['current'] = lead_idx + 1
+                progress_data['imported'] = imported_count
+                progress_data['skipped'] = skipped_count
+                progress_data['errors'] = error_count
+                import_progress[session_id] = progress_data
+                save_progress(session_id, progress_data)
+                
+                # Force garbage collection every 5 leads to keep memory usage low
+                if (lead_idx + 1) % 5 == 0:
+                    gc.collect()
+                    print(f"Memory usage after lead {lead_idx + 1}: {get_memory_usage():.1f} MB")
+                
+                # Small delay between leads to be gentle on Render
+                time.sleep(0.5)
             
             print(f"Import completed: {imported_count} imported, {skipped_count} skipped, {error_count} errors")
             progress_data['current'] = total_leads
@@ -1055,10 +1076,6 @@ def resume_import():
     if response.status_code != 200:
         return jsonify({'error': 'Could not access Google Sheet'})
     
-    csv_content = response.text
-    csv_reader = csv.DictReader(io.StringIO(csv_content))
-    all_leads = list(csv_reader)
-    
     # Resume from where we left off
     current_position = progress_data.get('current', 0)
     print(f"Resuming import from position {current_position}")
@@ -1089,92 +1106,95 @@ def resume_import():
             import_progress[session_id] = progress_data
             save_progress(session_id, progress_data)
             
-            # Process remaining leads
-            batch_size = 3
-            for batch_start in range(current_position, len(all_leads), batch_size):
-                batch_end = min(batch_start + batch_size, len(all_leads))
-                batch = all_leads[batch_start:batch_end]
+            # Stream leads from CSV and skip to current position
+            csv_url = f"https://docs.google.com/spreadsheets/d/{spreadsheet_id}/gviz/tq?tqx=out:csv"
+            
+            for lead_idx, row in enumerate(stream_leads_from_csv(csv_url)):
+                # Skip leads that were already processed
+                if lead_idx < current_position:
+                    continue
                 
-                print(f"Processing batch {batch_start//batch_size + 1} ({batch_start+1}-{batch_end})")
-                
-                for idx, row in enumerate(batch):
-                    global_idx = batch_start + idx
+                try:
+                    first_name = row.get('First Name', '').strip()
+                    last_name = row.get('Last Name', '').strip()
+                    email = row.get('E-mail', '').strip()
+                    company_phone = row.get('Company Phone Number', '').strip()
+                    company_name = row.get('Company Name', '').strip()
+                    website = row.get('Website', '').strip()
+                    linkedin = row.get('Linkedin', '').strip()
+                    title = row.get('Title', '').strip()
+                    location = row.get('Location', '').strip()
+                    category = row.get('Category', '').strip()
+                    funded_year = row.get('Funded Year', '').strip()
                     
-                    try:
-                        first_name = row.get('First Name', '').strip()
-                        last_name = row.get('Last Name', '').strip()
-                        email = row.get('E-mail', '').strip()
-                        company_phone = row.get('Company Phone Number', '').strip()
-                        company_name = row.get('Company Name', '').strip()
-                        website = row.get('Website', '').strip()
-                        linkedin = row.get('Linkedin', '').strip()
-                        title = row.get('Title', '').strip()
-                        location = row.get('Location', '').strip()
-                        category = row.get('Category', '').strip()
-                        funded_year = row.get('Funded Year', '').strip()
-                        
-                        # Skip if required fields are empty
-                        if not first_name or not last_name or not email:
-                            print(f"Skipping lead {global_idx + 1}: Missing required fields")
-                            error_count += 1
-                            progress_data['current'] = global_idx + 1
-                            progress_data['errors'] = error_count
-                            import_progress[session_id] = progress_data
-                            save_progress(session_id, progress_data)
-                            continue
-                        
-                        # Skip duplicates if enabled
-                        if skip_duplicates and email.lower() in existing_emails:
-                            print(f"Skipping lead {global_idx + 1}: Duplicate email")
-                            skipped_count += 1
-                            progress_data['current'] = global_idx + 1
-                            progress_data['skipped'] = skipped_count
-                            import_progress[session_id] = progress_data
-                            save_progress(session_id, progress_data)
-                            continue
-                        
-                        full_name = f"{first_name} {last_name}".strip()
-                        properties = {
-                            "Name": {"title": [{"text": {"content": full_name}}]},
-                            "Email": {"email": email},
-                            "Phone": {"phone_number": company_phone} if company_phone else None,
-                            "Title": {"rich_text": [{"text": {"content": title}}]} if title else None,
-                            "Organisation": {"rich_text": [{"text": {"content": company_name}}]} if company_name else None,
-                            "Website": {"url": website if website.startswith(('http://', 'https://')) else f'https://{website}'} if website else None,
-                            "Social Media": {"url": linkedin if linkedin.startswith(('http://', 'https://')) else f'https://{linkedin}'} if linkedin else None,
-                            "Location": {"rich_text": [{"text": {"content": location}}]} if location else None,
-                            "Industry": {"rich_text": [{"text": {"content": category}}]} if category else None,
-                            "Lead Source": {"select": {"name": "Cold Outreach"}},
-                            "Status": {"status": {"name": "Not contacted"}}
-                        }
-                        properties = {k: v for k, v in properties.items() if v is not None}
-                        
-                        # Create the page
-                        notion.pages.create(parent={"database_id": notion_database_id}, properties=properties)
-                        
-                        # Add to existing emails set to prevent duplicates within the same import
-                        if skip_duplicates:
-                            existing_emails.add(email.lower())
-                        
-                        imported_count += 1
-                        print(f"Imported lead {global_idx + 1}: {full_name} ({email})")
-                            
-                    except Exception as e:
-                        print(f"Error importing lead {global_idx + 1}: {str(e)}")
+                    # Skip if required fields are empty
+                    if not first_name or not last_name or not email:
+                        print(f"Skipping lead {lead_idx + 1}: Missing required fields")
                         error_count += 1
+                        progress_data['current'] = lead_idx + 1
+                        progress_data['errors'] = error_count
+                        import_progress[session_id] = progress_data
+                        save_progress(session_id, progress_data)
+                        continue
                     
-                    # Update progress
-                    progress_data['current'] = global_idx + 1
-                    progress_data['imported'] = imported_count
-                    progress_data['skipped'] = skipped_count
-                    progress_data['errors'] = error_count
-                    import_progress[session_id] = progress_data
-                    save_progress(session_id, progress_data)
+                    # Skip duplicates if enabled
+                    if skip_duplicates and email.lower() in existing_emails:
+                        print(f"Skipping lead {lead_idx + 1}: Duplicate email")
+                        skipped_count += 1
+                        progress_data['current'] = lead_idx + 1
+                        progress_data['skipped'] = skipped_count
+                        import_progress[session_id] = progress_data
+                        save_progress(session_id, progress_data)
+                        continue
+                    
+                    full_name = f"{first_name} {last_name}".strip()
+                    properties = {
+                        "Name": {"title": [{"text": {"content": full_name}}]},
+                        "Email": {"email": email},
+                        "Phone": {"phone_number": company_phone} if company_phone else None,
+                        "Title": {"rich_text": [{"text": {"content": title}}]} if title else None,
+                        "Organisation": {"rich_text": [{"text": {"content": company_name}}]} if company_name else None,
+                        "Website": {"url": website if website.startswith(('http://', 'https://')) else f'https://{website}'} if website else None,
+                        "Social Media": {"url": linkedin if linkedin.startswith(('http://', 'https://')) else f'https://{linkedin}'} if linkedin else None,
+                        "Location": {"rich_text": [{"text": {"content": location}}]} if location else None,
+                        "Industry": {"rich_text": [{"text": {"content": category}}]} if category else None,
+                        "Lead Source": {"select": {"name": "Cold Outreach"}},
+                        "Status": {"status": {"name": "Not contacted"}}
+                    }
+                    properties = {k: v for k, v in properties.items() if v is not None}
+                    
+                    # Create the page
+                    notion.pages.create(parent={"database_id": notion_database_id}, properties=properties)
+                    
+                    # Add to existing emails set to prevent duplicates within the same import
+                    if skip_duplicates:
+                        existing_emails.add(email.lower())
+                    
+                    imported_count += 1
+                    print(f"Imported lead {lead_idx + 1}: {full_name} ({email})")
+                        
+                except Exception as e:
+                    print(f"Error importing lead {lead_idx + 1}: {str(e)}")
+                    error_count += 1
                 
-                time.sleep(1.0)
+                # Update progress after each lead
+                progress_data['current'] = lead_idx + 1
+                progress_data['imported'] = imported_count
+                progress_data['skipped'] = skipped_count
+                progress_data['errors'] = error_count
+                import_progress[session_id] = progress_data
+                save_progress(session_id, progress_data)
+                
+                # Force garbage collection every 5 leads to keep memory usage low
+                if (lead_idx + 1) % 5 == 0:
+                    gc.collect()
+                    print(f"Memory usage after lead {lead_idx + 1}: {get_memory_usage():.1f} MB")
+                
+                # Small delay between leads to be gentle on Render
+                time.sleep(0.5)
             
             print(f"Import completed: {imported_count} imported, {skipped_count} skipped, {error_count} errors")
-            progress_data['current'] = len(all_leads)
+            progress_data['current'] = total_leads
             progress_data['status'] = 'completed'
             progress_data['imported'] = imported_count
             progress_data['skipped'] = skipped_count
@@ -1197,7 +1217,9 @@ def resume_import():
     import_tasks[session_id] = resume_thread
     resume_thread.start()
     
-    return jsonify({'status': 'resuming', 'current': current_position, 'total': len(all_leads)})
+    # Count total leads without loading all into memory
+    total_leads = len(response.text.split('\n')) - 1  # Subtract 1 for header
+    return jsonify({'status': 'resuming', 'current': current_position, 'total': total_leads})
 
 @app.route('/import-status')
 def import_status():

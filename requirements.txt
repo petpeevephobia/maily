@@ -9,6 +9,7 @@ beautifulsoup4==4.12.2
 lxml==4.9.3
 gunicorn==21.2.0
 gevent==23.9.1
+psutil==5.9.5
 
 numpy==1.24.3
 pandas==2.0.3
