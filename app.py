@@ -52,6 +52,16 @@ def get_memory_usage():
     except:
         return 0
 
+def check_memory_limit():
+    """Check if memory usage is approaching limits and force cleanup if needed"""
+    memory_mb = get_memory_usage()
+    if memory_mb > 80:  # If memory usage exceeds 80MB
+        print(f"WARNING: High memory usage detected: {memory_mb:.1f} MB")
+        gc.collect()
+        time.sleep(0.5)  # Give GC time to work
+        return True
+    return False
+
 def save_progress(session_id, progress_data):
     """Save progress to file for recovery after restarts"""
     try:
@@ -93,6 +103,19 @@ def stream_leads_from_csv(csv_url):
     
     for row in csv_reader:
         yield row
+
+def count_leads_in_csv(csv_url):
+    """Count leads in CSV without loading all content into memory"""
+    import requests
+    response = requests.get(csv_url)
+    if response.status_code != 200:
+        raise Exception('Could not access Google Sheet')
+    
+    # Count lines more efficiently
+    lines = response.text.split('\n')
+    # Remove empty lines and header
+    non_empty_lines = [line for line in lines if line.strip()]
+    return max(0, len(non_empty_lines) - 1)  # Subtract 1 for header
 
 @app.before_request
 def ensure_session_id():
@@ -882,18 +905,18 @@ def start_import():
     skip_duplicates = 'skip_duplicates' in request.form
     
     # Parse Google Sheet
-    import re, requests
+    import re
     spreadsheet_id_match = re.search(r'/spreadsheets/d/([a-zA-Z0-9-_]+)', google_sheets_url)
     if not spreadsheet_id_match:
         return 'Invalid Google Sheets URL', 400
     spreadsheet_id = spreadsheet_id_match.group(1)
     csv_url = f"https://docs.google.com/spreadsheets/d/{spreadsheet_id}/gviz/tq?tqx=out:csv"
-    response = requests.get(csv_url)
-    if response.status_code != 200:
-        return 'Could not access Google Sheet', 400
     
     # Count total leads without loading all into memory
-    total_leads = len(response.text.split('\n')) - 1  # Subtract 1 for header
+    try:
+        total_leads = count_leads_in_csv(csv_url)
+    except Exception as e:
+        return f'Could not access Google Sheet: {str(e)}', 400
     
     print(f"Starting import for {total_leads} leads")
     
@@ -944,6 +967,7 @@ def start_import():
             
             for lead_idx, row in enumerate(stream_leads_from_csv(csv_url)):
                 try:
+                    # Extract data with minimal memory usage
                     first_name = row.get('First Name', '').strip()
                     last_name = row.get('Last Name', '').strip()
                     email = row.get('E-mail', '').strip()
@@ -954,7 +978,6 @@ def start_import():
                     title = row.get('Title', '').strip()
                     location = row.get('Location', '').strip()
                     category = row.get('Category', '').strip()
-                    funded_year = row.get('Funded Year', '').strip()
                     
                     # Skip if required fields are empty
                     if not first_name or not last_name or not email:
@@ -976,21 +999,32 @@ def start_import():
                         save_progress(session_id, progress_data)
                         continue
                     
+                    # Build properties with minimal memory allocation
                     full_name = f"{first_name} {last_name}".strip()
-                    properties = {
-                        "Name": {"title": [{"text": {"content": full_name}}]},
-                        "Email": {"email": email},
-                        "Phone": {"phone_number": company_phone} if company_phone else None,
-                        "Title": {"rich_text": [{"text": {"content": title}}]} if title else None,
-                        "Organisation": {"rich_text": [{"text": {"content": company_name}}]} if company_name else None,
-                        "Website": {"url": website if website.startswith(('http://', 'https://')) else f'https://{website}'} if website else None,
-                        "Social Media": {"url": linkedin if linkedin.startswith(('http://', 'https://')) else f'https://{linkedin}'} if linkedin else None,
-                        "Location": {"rich_text": [{"text": {"content": location}}]} if location else None,
-                        "Industry": {"rich_text": [{"text": {"content": category}}]} if category else None,
-                        "Lead Source": {"select": {"name": "Cold Outreach"}},
-                        "Status": {"status": {"name": "Not contacted"}}
-                    }
-                    properties = {k: v for k, v in properties.items() if v is not None}
+                    properties = {}
+                    
+                    # Only add properties that have values
+                    properties["Name"] = {"title": [{"text": {"content": full_name}}]}
+                    properties["Email"] = {"email": email}
+                    properties["Lead Source"] = {"select": {"name": "Cold Outreach"}}
+                    properties["Status"] = {"status": {"name": "Not contacted"}}
+                    
+                    if company_phone:
+                        properties["Phone"] = {"phone_number": company_phone}
+                    if title:
+                        properties["Title"] = {"rich_text": [{"text": {"content": title}}]}
+                    if company_name:
+                        properties["Organisation"] = {"rich_text": [{"text": {"content": company_name}}]}
+                    if website:
+                        website_url = website if website.startswith(('http://', 'https://')) else f'https://{website}'
+                        properties["Website"] = {"url": website_url}
+                    if linkedin:
+                        linkedin_url = linkedin if linkedin.startswith(('http://', 'https://')) else f'https://{linkedin}'
+                        properties["Social Media"] = {"url": linkedin_url}
+                    if location:
+                        properties["Location"] = {"rich_text": [{"text": {"content": location}}]}
+                    if category:
+                        properties["Industry"] = {"rich_text": [{"text": {"content": category}}]}
                     
                     # Create the page
                     notion.pages.create(parent={"database_id": notion_database_id}, properties=properties)
@@ -1014,13 +1048,13 @@ def start_import():
                 import_progress[session_id] = progress_data
                 save_progress(session_id, progress_data)
                 
-                # Force garbage collection every 5 leads to keep memory usage low
-                if (lead_idx + 1) % 5 == 0:
+                # Force garbage collection every 3 leads to keep memory usage very low
+                if (lead_idx + 1) % 3 == 0:
                     gc.collect()
                     print(f"Memory usage after lead {lead_idx + 1}: {get_memory_usage():.1f} MB")
                 
                 # Small delay between leads to be gentle on Render
-                time.sleep(0.5)
+                time.sleep(0.3)
             
             print(f"Import completed: {imported_count} imported, {skipped_count} skipped, {error_count} errors")
             progress_data['current'] = total_leads
@@ -1115,6 +1149,7 @@ def resume_import():
                     continue
                 
                 try:
+                    # Extract data with minimal memory usage
                     first_name = row.get('First Name', '').strip()
                     last_name = row.get('Last Name', '').strip()
                     email = row.get('E-mail', '').strip()
@@ -1125,7 +1160,6 @@ def resume_import():
                     title = row.get('Title', '').strip()
                     location = row.get('Location', '').strip()
                     category = row.get('Category', '').strip()
-                    funded_year = row.get('Funded Year', '').strip()
                     
                     # Skip if required fields are empty
                     if not first_name or not last_name or not email:
@@ -1147,21 +1181,32 @@ def resume_import():
                         save_progress(session_id, progress_data)
                         continue
                     
+                    # Build properties with minimal memory allocation
                     full_name = f"{first_name} {last_name}".strip()
-                    properties = {
-                        "Name": {"title": [{"text": {"content": full_name}}]},
-                        "Email": {"email": email},
-                        "Phone": {"phone_number": company_phone} if company_phone else None,
-                        "Title": {"rich_text": [{"text": {"content": title}}]} if title else None,
-                        "Organisation": {"rich_text": [{"text": {"content": company_name}}]} if company_name else None,
-                        "Website": {"url": website if website.startswith(('http://', 'https://')) else f'https://{website}'} if website else None,
-                        "Social Media": {"url": linkedin if linkedin.startswith(('http://', 'https://')) else f'https://{linkedin}'} if linkedin else None,
-                        "Location": {"rich_text": [{"text": {"content": location}}]} if location else None,
-                        "Industry": {"rich_text": [{"text": {"content": category}}]} if category else None,
-                        "Lead Source": {"select": {"name": "Cold Outreach"}},
-                        "Status": {"status": {"name": "Not contacted"}}
-                    }
-                    properties = {k: v for k, v in properties.items() if v is not None}
+                    properties = {}
+                    
+                    # Only add properties that have values
+                    properties["Name"] = {"title": [{"text": {"content": full_name}}]}
+                    properties["Email"] = {"email": email}
+                    properties["Lead Source"] = {"select": {"name": "Cold Outreach"}}
+                    properties["Status"] = {"status": {"name": "Not contacted"}}
+                    
+                    if company_phone:
+                        properties["Phone"] = {"phone_number": company_phone}
+                    if title:
+                        properties["Title"] = {"rich_text": [{"text": {"content": title}}]}
+                    if company_name:
+                        properties["Organisation"] = {"rich_text": [{"text": {"content": company_name}}]}
+                    if website:
+                        website_url = website if website.startswith(('http://', 'https://')) else f'https://{website}'
+                        properties["Website"] = {"url": website_url}
+                    if linkedin:
+                        linkedin_url = linkedin if linkedin.startswith(('http://', 'https://')) else f'https://{linkedin}'
+                        properties["Social Media"] = {"url": linkedin_url}
+                    if location:
+                        properties["Location"] = {"rich_text": [{"text": {"content": location}}]}
+                    if category:
+                        properties["Industry"] = {"rich_text": [{"text": {"content": category}}]}
                     
                     # Create the page
                     notion.pages.create(parent={"database_id": notion_database_id}, properties=properties)
@@ -1185,13 +1230,13 @@ def resume_import():
                 import_progress[session_id] = progress_data
                 save_progress(session_id, progress_data)
                 
-                # Force garbage collection every 5 leads to keep memory usage low
-                if (lead_idx + 1) % 5 == 0:
+                # Force garbage collection every 3 leads to keep memory usage very low
+                if (lead_idx + 1) % 3 == 0:
                     gc.collect()
                     print(f"Memory usage after lead {lead_idx + 1}: {get_memory_usage():.1f} MB")
                 
                 # Small delay between leads to be gentle on Render
-                time.sleep(0.5)
+                time.sleep(0.3)
             
             print(f"Import completed: {imported_count} imported, {skipped_count} skipped, {error_count} errors")
             progress_data['current'] = total_leads
@@ -1218,7 +1263,10 @@ def resume_import():
     resume_thread.start()
     
     # Count total leads without loading all into memory
-    total_leads = len(response.text.split('\n')) - 1  # Subtract 1 for header
+    try:
+        total_leads = count_leads_in_csv(csv_url)
+    except Exception as e:
+        return jsonify({'error': f'Could not access Google Sheet: {str(e)}'})
     return jsonify({'status': 'resuming', 'current': current_position, 'total': total_leads})
 
 @app.route('/import-status')
