@@ -1431,81 +1431,81 @@ def import_chunk():
         if leads_processed >= count:
             break
         print(f"Processing row {idx}: {row.get('First Name', '')} {row.get('Last Name', '')} - {row.get('E-mail', '')}")
+    
+        first_name = row.get('First Name', '').strip()
+        last_name = row.get('Last Name', '').strip()
+        email = row.get('E-mail', '').strip()
+        company_phone = row.get('Company Phone Number', '').strip()
+        company_name = row.get('Company Name', '').strip()
+        website = row.get('Website', '').strip()
+        linkedin = row.get('Linkedin', '').strip()
+        title = row.get('Title', '').strip()
+        location = row.get('Location', '').strip()
+        category = row.get('Category', '').strip()
+        # Skip if required fields are empty
+        if not first_name or not last_name or not email:
+            print(f"  Skipping row {idx}: Missing required fields (first_name='{first_name}', last_name='{last_name}', email='{email}')")
+            error_count += 1
+            errors_detail.append({
+                'row': idx + 1,  # 1-based index for user
+                'reason': 'Missing required fields',
+                'fields': {
+                    'First Name': first_name,
+                    'Last Name': last_name,
+                    'E-mail': email
+                },
+                'row_data': row
+            })
+            continue
+        # Skip duplicates if enabled
+        if skip_duplicates and email.lower() in existing_emails:
+            print(f"  Skipping row {idx}: Duplicate email '{email}'")
+            skipped_count += 1
+            continue
+        full_name = f"{first_name} {last_name}".strip()
+        properties = {
+            "Name": {"title": [{"text": {"content": full_name}}]},
+            "Email": {"email": email},
+            "Lead Source": {"select": {"name": "Cold Outreach"}},
+            "Status": {"status": {"name": "Not contacted"}}
+        }
+        if company_phone:
+            properties["Phone"] = {"phone_number": company_phone}
+        if title:
+            properties["Title"] = {"rich_text": [{"text": {"content": title}}]}
+        if company_name:
+            properties["Organisation"] = {"rich_text": [{"text": {"content": company_name}}]}
+        if website:
+            website_url = website if website.startswith(('http://', 'https://')) else f'https://{website}'
+            properties["Website"] = {"url": website_url}
+        if linkedin:
+            linkedin_url = linkedin if linkedin.startswith(('http://', 'https://')) else f'https://{linkedin}'
+            properties["Social Media"] = {"url": linkedin_url}
+        if location:
+            properties["Location"] = {"rich_text": [{"text": {"content": location}}]}
+        if category:
+            properties["Industry"] = {"rich_text": [{"text": {"content": category}}]}
+        # Only wrap the Notion API call in try/except
         try:
-            first_name = row.get('First Name', '').strip()
-            last_name = row.get('Last Name', '').strip()
-            email = row.get('E-mail', '').strip()
-            company_phone = row.get('Company Phone Number', '').strip()
-            company_name = row.get('Company Name', '').strip()
-            website = row.get('Website', '').strip()
-            linkedin = row.get('Linkedin', '').strip()
-            title = row.get('Title', '').strip()
-            location = row.get('Location', '').strip()
-            category = row.get('Category', '').strip()
-            # Skip if required fields are empty
-            if not first_name or not last_name or not email:
-                print(f"  Skipping row {idx}: Missing required fields (first_name='{first_name}', last_name='{last_name}', email='{email}')")
-                error_count += 1
-                errors_detail.append({
-                    'row': idx + 1,  # 1-based index for user
-                    'reason': 'Missing required fields',
-                    'fields': {
-                        'First Name': first_name,
-                        'Last Name': last_name,
-                        'E-mail': email
-                    },
-                    'row_data': row
-                })
-                continue
-            # Skip duplicates if enabled
-            if skip_duplicates and email.lower() in existing_emails:
-                print(f"  Skipping row {idx}: Duplicate email '{email}'")
-                skipped_count += 1
-                continue
-            full_name = f"{first_name} {last_name}".strip()
-            properties = {
-                "Name": {"title": [{"text": {"content": full_name}}]},
-                "Email": {"email": email},
-                "Lead Source": {"select": {"name": "Cold Outreach"}},
-                "Status": {"status": {"name": "Not contacted"}}
-            }
-            if company_phone:
-                properties["Phone"] = {"phone_number": company_phone}
-            if title:
-                properties["Title"] = {"rich_text": [{"text": {"content": title}}]}
-            if company_name:
-                properties["Organisation"] = {"rich_text": [{"text": {"content": company_name}}]}
-            if website:
-                website_url = website if website.startswith(('http://', 'https://')) else f'https://{website}'
-                properties["Website"] = {"url": website_url}
-            if linkedin:
-                linkedin_url = linkedin if linkedin.startswith(('http://', 'https://')) else f'https://{linkedin}'
-                properties["Social Media"] = {"url": linkedin_url}
-            if location:
-                properties["Location"] = {"rich_text": [{"text": {"content": location}}]}
-            if category:
-                properties["Industry"] = {"rich_text": [{"text": {"content": category}}]}
-            # Only wrap the Notion API call in try/except
-            try:
-                notion.pages.create(parent={"database_id": notion_database_id}, properties=properties)
-                print(f"  Successfully imported: {full_name} ({email})")
-                if skip_duplicates:
-                    existing_emails.add(email.lower())
-                imported_count += 1
-            except Exception as e:
-                print(f"Error importing lead {first_name} {last_name}: {str(e)}")
-                error_count += 1
-                errors_detail.append({
-                    'row': idx + 1,
-                    'reason': f'Exception: {str(e)}',
-                    'fields': {
-                        'First Name': first_name,
-                        'Last Name': last_name,
-                        'E-mail': email
-                    },
-                    'row_data': row
-                })
-            leads_processed += 1
+            notion.pages.create(parent={"database_id": notion_database_id}, properties=properties)
+            print(f"  Successfully imported: {full_name} ({email})")
+            if skip_duplicates:
+                existing_emails.add(email.lower())
+            imported_count += 1
+        except Exception as e:
+            print(f"Error importing lead {first_name} {last_name}: {str(e)}")
+            error_count += 1
+            errors_detail.append({
+                'row': idx + 1,
+                'reason': f'Exception: {str(e)}',
+                'fields': {
+                    'First Name': first_name,
+                    'Last Name': last_name,
+                    'E-mail': email
+                },
+                'row_data': row
+            })
+        leads_processed += 1
     response_data = {
         'imported': imported_count,
         'skipped': skipped_count,
