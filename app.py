@@ -1423,6 +1423,7 @@ def import_chunk():
     error_count = 0
     processed = 0
     leads_processed = 0
+    errors_detail = []  # Collect error details here
     print(f"Processing chunk: start={start}, count={count}")
     for idx, row in enumerate(stream_leads_from_csv(csv_url)):
         if idx < start:
@@ -1445,6 +1446,16 @@ def import_chunk():
             if not first_name or not last_name or not email:
                 print(f"  Skipping row {idx}: Missing required fields (first_name='{first_name}', last_name='{last_name}', email='{email}')")
                 error_count += 1
+                errors_detail.append({
+                    'row': idx + 1,  # 1-based index for user
+                    'reason': 'Missing required fields',
+                    'fields': {
+                        'First Name': first_name,
+                        'Last Name': last_name,
+                        'E-mail': email
+                    },
+                    'row_data': row
+                })
                 continue
             # Skip duplicates if enabled
             if skip_duplicates and email.lower() in existing_emails:
@@ -1474,15 +1485,27 @@ def import_chunk():
                 properties["Location"] = {"rich_text": [{"text": {"content": location}}]}
             if category:
                 properties["Industry"] = {"rich_text": [{"text": {"content": category}}]}
-            notion.pages.create(parent={"database_id": notion_database_id}, properties=properties)
-            print(f"  Successfully imported: {full_name} ({email})")
-            if skip_duplicates:
-                existing_emails.add(email.lower())
-            imported_count += 1
-        except Exception as e:
-            print(f"Error importing lead {first_name} {last_name}: {str(e)}")
-            error_count += 1
-        leads_processed += 1
+            # Only wrap the Notion API call in try/except
+            try:
+                notion.pages.create(parent={"database_id": notion_database_id}, properties=properties)
+                print(f"  Successfully imported: {full_name} ({email})")
+                if skip_duplicates:
+                    existing_emails.add(email.lower())
+                imported_count += 1
+            except Exception as e:
+                print(f"Error importing lead {first_name} {last_name}: {str(e)}")
+                error_count += 1
+                errors_detail.append({
+                    'row': idx + 1,
+                    'reason': f'Exception: {str(e)}',
+                    'fields': {
+                        'First Name': first_name,
+                        'Last Name': last_name,
+                        'E-mail': email
+                    },
+                    'row_data': row
+                })
+            leads_processed += 1
     response_data = {
         'imported': imported_count,
         'skipped': skipped_count,
@@ -1490,7 +1513,8 @@ def import_chunk():
         'start': start,
         'count': leads_processed,
         'total': total_leads,
-        'next_start': start + leads_processed if (start + leads_processed) < total_leads else None
+        'next_start': start + leads_processed if (start + leads_processed) < total_leads else None,
+        'errors_detail': errors_detail
     }
     print(f"Returning response: {response_data}")
     return jsonify(response_data)

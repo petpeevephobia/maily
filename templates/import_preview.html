@@ -109,6 +109,8 @@
                             </div>
                         </div>
 
+                        <div id="importErrorsContainer" style="display:none; margin-bottom: 1.5rem;"></div>
+
                         <div id="importTimer" style="display:none; margin-bottom: 1rem; text-align: center; color: #555;">
                             <span>Elapsed time: <span id="elapsedTime">0</span> seconds</span>
                         </div>
@@ -167,6 +169,39 @@
                 importProgressBar.style.width = percent + '%';
                 importProgressPercent.textContent = percent + '% (' + imported + ' imported, ' + skipped + ' skipped, ' + errors + ' errors)';
             }
+            function renderErrors(errorsDetail) {
+                const container = document.getElementById('importErrorsContainer');
+                if (!errorsDetail || errorsDetail.length === 0) {
+                    container.style.display = 'none';
+                    container.innerHTML = '';
+                    return;
+                }
+                let html = `<div class="alert alert-warning">${errorsDetail.length} error(s) occurred during import. <a href="#" id="toggleErrorDetails">Show details</a></div>`;
+                html += `<div id="errorDetailsTable" style="display:none; max-height:300px; overflow:auto; margin-top:0.5rem;">
+                    <table class="table table-sm table-bordered bg-white">
+                        <thead><tr><th>Row</th><th>Reason</th><th>First Name</th><th>Last Name</th><th>Email</th></tr></thead><tbody>`;
+                for (const err of errorsDetail) {
+                    html += `<tr><td>${err.row}</td><td>${err.reason}</td><td>${err.fields['First Name']||''}</td><td>${err.fields['Last Name']||''}</td><td>${err.fields['E-mail']||''}</td></tr>`;
+                }
+                html += '</tbody></table></div>';
+                container.innerHTML = html;
+                container.style.display = '';
+                // Toggle show/hide
+                const toggle = document.getElementById('toggleErrorDetails');
+                const details = document.getElementById('errorDetailsTable');
+                if (toggle && details) {
+                    toggle.addEventListener('click', function(e) {
+                        e.preventDefault();
+                        if (details.style.display === 'none') {
+                            details.style.display = '';
+                            toggle.textContent = 'Hide details';
+                        } else {
+                            details.style.display = 'none';
+                            toggle.textContent = 'Show details';
+                        }
+                    });
+                }
+            }
             if (importChunkForm && importChunkBtn) {
                 importChunkForm.addEventListener('submit', function(e) {
                     e.preventDefault();
@@ -195,10 +230,15 @@
                         errors += data.errors;
                         currentStart = data.start + data.count;
                         updateProgressBar();
+                        renderErrors(data.errors_detail);
                         if (data.next_start !== null) {
                             chunkStartInput.value = data.next_start;
                             importChunkBtn.querySelector('.btn-text').textContent = 'Import Next 10';
-                            importChunkBtn.disabled = false;
+                            importChunkBtn.disabled = true;
+                            // Automatically submit the form for the next chunk
+                            setTimeout(() => {
+                                importChunkForm.requestSubmit();
+                            }, 400); // slight delay for UI update
                         } else {
                             importChunkBtn.querySelector('.btn-text').textContent = 'All Leads Imported!';
                             importChunkBtn.disabled = true;
@@ -210,6 +250,9 @@
                         alert('Import failed: ' + err);
                     });
                 });
+                // Start the first chunk automatically
+                importChunkBtn.style.display = 'none'; // Hide the button
+                importChunkForm.requestSubmit();
             }
             updateProgressBar();
         });
