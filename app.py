@@ -1423,11 +1423,13 @@ def import_chunk():
     error_count = 0
     processed = 0
     leads_processed = 0
+    print(f"Processing chunk: start={start}, count={count}")
     for idx, row in enumerate(stream_leads_from_csv(csv_url)):
         if idx < start:
             continue
         if leads_processed >= count:
             break
+        print(f"Processing row {idx}: {row.get('First Name', '')} {row.get('Last Name', '')} - {row.get('E-mail', '')}")
         try:
             first_name = row.get('First Name', '').strip()
             last_name = row.get('Last Name', '').strip()
@@ -1441,10 +1443,12 @@ def import_chunk():
             category = row.get('Category', '').strip()
             # Skip if required fields are empty
             if not first_name or not last_name or not email:
+                print(f"  Skipping row {idx}: Missing required fields (first_name='{first_name}', last_name='{last_name}', email='{email}')")
                 error_count += 1
                 continue
             # Skip duplicates if enabled
             if skip_duplicates and email.lower() in existing_emails:
+                print(f"  Skipping row {idx}: Duplicate email '{email}'")
                 skipped_count += 1
                 continue
             full_name = f"{first_name} {last_name}".strip()
@@ -1471,6 +1475,7 @@ def import_chunk():
             if category:
                 properties["Industry"] = {"rich_text": [{"text": {"content": category}}]}
             notion.pages.create(parent={"database_id": notion_database_id}, properties=properties)
+            print(f"  Successfully imported: {full_name} ({email})")
             if skip_duplicates:
                 existing_emails.add(email.lower())
             imported_count += 1
@@ -1478,7 +1483,7 @@ def import_chunk():
             print(f"Error importing lead {first_name} {last_name}: {str(e)}")
             error_count += 1
         leads_processed += 1
-    return jsonify({
+    response_data = {
         'imported': imported_count,
         'skipped': skipped_count,
         'errors': error_count,
@@ -1486,7 +1491,9 @@ def import_chunk():
         'count': leads_processed,
         'total': total_leads,
         'next_start': start + leads_processed if (start + leads_processed) < total_leads else None
-    })
+    }
+    print(f"Returning response: {response_data}")
+    return jsonify(response_data)
 
 # Add nl2br filter
 @app.template_filter('nl2br')

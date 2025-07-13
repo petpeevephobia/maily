@@ -174,10 +174,15 @@
                     importChunkBtn.querySelector('.btn-text').classList.add('d-none');
                     importChunkBtn.querySelector('.btn-loading').classList.remove('d-none');
                     importProgressContainer.style.display = '';
+                    console.log('Sending import chunk request...');
                     fetch('/import-chunk', {
                         method: 'POST',
                         body: new FormData(importChunkForm)
-                    }).then(res => res.json()).then(data => {
+                    }).then(res => {
+                        console.log('Response status:', res.status);
+                        return res.json();
+                    }).then(data => {
+                        console.log('Import chunk response:', data);
                         importChunkBtn.disabled = false;
                         importChunkBtn.querySelector('.btn-text').classList.remove('d-none');
                         importChunkBtn.querySelector('.btn-loading').classList.add('d-none');
@@ -192,10 +197,10 @@
                         updateProgressBar();
                         if (data.next_start !== null) {
                             chunkStartInput.value = data.next_start;
-                            importChunkBtn.textContent = 'Import Next 10';
+                            importChunkBtn.querySelector('.btn-text').textContent = 'Import Next 10';
                             importChunkBtn.disabled = false;
                         } else {
-                            importChunkBtn.textContent = 'All Leads Imported!';
+                            importChunkBtn.querySelector('.btn-text').textContent = 'All Leads Imported!';
                             importChunkBtn.disabled = true;
                         }
                     }).catch(err => {
