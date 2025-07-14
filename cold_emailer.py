@@ -24,7 +24,7 @@ load_dotenv()
 TEST_MODE = True
 TEST_EMAIL = "nadra@thenadraagency.com"
 TEST_LIMIT = 3
-BCC_EMAIL = "nadra@thenadraagency.com"
+BCC_EMAIL = "nadra@solvia.app"
 
 
 
