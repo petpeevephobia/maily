@@ -181,7 +181,7 @@
                     <table class="table table-sm table-bordered bg-white">
                         <thead><tr><th>Row</th><th>Reason</th><th>First Name</th><th>Last Name</th><th>Email</th></tr></thead><tbody>`;
                 for (const err of errorsDetail) {
-                    html += `<tr><td>${err.row}</td><td>${err.reason}</td><td>${err.fields['First Name']||''}</td><td>${err.fields['Last Name']||''}</td><td>${err.fields['E-mail']||''}</td></tr>`;
+                    html += `<tr><td>${err.row}</td><td>${err.reason}</td><td>${err.fields['First Name']||''}</td><td>${err.fields['Last Name']||''}</td><td>${err.fields['Email']||''}</td></tr>`;
                 }
                 html += '</tbody></table></div>';
                 container.innerHTML = html;
@@ -225,12 +225,27 @@
                             alert('Import error: ' + data.error);
                             return;
                         }
-                        imported += data.imported;
-                        skipped += data.skipped;
-                        errors += data.errors;
-                        currentStart = data.start + data.count;
+                        console.log(`Before: imported=${imported}, skipped=${skipped}, errors=${errors}`);
+                        console.log(`Chunk data: start=${data.start}, processed=${data.processed_total}, next_start=${data.next_start}`);
+                        
+                        // Only add counts if this is a new chunk (not a retry)
+                        if (data.start >= currentStart) {
+                            imported += data.imported;
+                            skipped += data.skipped;
+                            errors += data.errors;
+                        } else {
+                            console.log('Skipping count accumulation - possible retry detected');
+                        }
+                        
+                        console.log(`After: imported=${imported}, skipped=${skipped}, errors=${errors}`);
+                        currentStart = data.next_start || (data.start + data.processed_total);
                         updateProgressBar();
-                        renderErrors(data.errors_detail);
+                        
+                        // Show error details if any errors occurred
+                        if (data.errors_detail && data.errors_detail.length > 0) {
+                            renderErrors(data.errors_detail);
+                        }
+                        
                         if (data.next_start !== null) {
                             chunkStartInput.value = data.next_start;
                             importChunkBtn.querySelector('.btn-text').textContent = 'Import Next 10';
@@ -238,10 +253,18 @@
                             // Automatically submit the form for the next chunk
                             setTimeout(() => {
                                 importChunkForm.requestSubmit();
-                            }, 400); // slight delay for UI update
+                            }, 1000); // 1 second delay to avoid API rate limiting
                         } else {
+                            // Import is complete
                             importChunkBtn.querySelector('.btn-text').textContent = 'All Leads Imported!';
                             importChunkBtn.disabled = true;
+                            
+                            // Show final summary
+                            const finalMessage = `Import complete! ${imported} leads imported, ${skipped} skipped, ${errors} errors.`;
+                            const summaryDiv = document.createElement('div');
+                            summaryDiv.className = 'alert alert-success mt-3';
+                            summaryDiv.textContent = finalMessage;
+                            importChunkForm.parentNode.insertBefore(summaryDiv, importChunkForm);
                         }
                     }).catch(err => {
                         importChunkBtn.disabled = false;

@@ -1430,12 +1430,14 @@ def import_chunk():
             continue
         if leads_processed >= count:
             break
-        print(f"Processing row {idx}: {row.get('First Name', '')} {row.get('Last Name', '')} - {row.get('E-mail', '')}")
+        print(f"Processing row {idx}: {row.get('First Name', '')} {row.get('Last Name', '')} - {email}")
     
         first_name = row.get('First Name', '').strip()
         last_name = row.get('Last Name', '').strip()
-        email = row.get('E-mail', '').strip()
-        company_phone = row.get('Company Phone Number', '').strip()
+        # Try both email column formats
+        email = row.get('E-mail', row.get('Email', '')).strip()
+        # Prefer 'Company Phone Number', fallback to 'Company Phone'
+        company_phone = row.get('Company Phone Number', '').strip() or row.get('Company Phone', '').strip()
         company_name = row.get('Company Name', '').strip()
         website = row.get('Website', '').strip()
         linkedin = row.get('Linkedin', '').strip()
@@ -1452,15 +1454,17 @@ def import_chunk():
                 'fields': {
                     'First Name': first_name,
                     'Last Name': last_name,
-                    'E-mail': email
+                    'Email': email
                 },
                 'row_data': row
             })
+            leads_processed += 1
             continue
         # Skip duplicates if enabled
         if skip_duplicates and email.lower() in existing_emails:
             print(f"  Skipping row {idx}: Duplicate email '{email}'")
             skipped_count += 1
+            leads_processed += 1
             continue
         full_name = f"{first_name} {last_name}".strip()
         properties = {
@@ -1486,26 +1490,67 @@ def import_chunk():
         if category:
             properties["Industry"] = {"rich_text": [{"text": {"content": category}}]}
         # Only wrap the Notion API call in try/except
-        try:
-            notion.pages.create(parent={"database_id": notion_database_id}, properties=properties)
-            print(f"  Successfully imported: {full_name} ({email})")
-            if skip_duplicates:
-                existing_emails.add(email.lower())
-            imported_count += 1
-        except Exception as e:
-            print(f"Error importing lead {first_name} {last_name}: {str(e)}")
-            error_count += 1
-            errors_detail.append({
-                'row': idx + 1,
-                'reason': f'Exception: {str(e)}',
-                'fields': {
-                    'First Name': first_name,
-                    'Last Name': last_name,
-                    'E-mail': email
-                },
-                'row_data': row
-            })
+        max_retries = 3
+        retry_count = 0
+        success = False
+        
+        while retry_count < max_retries and not success:
+            try:
+                notion.pages.create(parent={"database_id": notion_database_id}, properties=properties)
+                print(f"  Successfully imported: {full_name} ({email})")
+                if skip_duplicates:
+                    existing_emails.add(email.lower())
+                imported_count += 1
+                success = True
+            except Exception as e:
+                retry_count += 1
+                error_msg = str(e)
+                print(f"Error importing lead {first_name} {last_name} (attempt {retry_count}/{max_retries}): {error_msg}")
+                
+                # If it's a timeout, wait before retrying
+                if "timeout" in error_msg.lower() or "timed out" in error_msg.lower():
+                    if retry_count < max_retries:
+                        print(f"  Waiting 2 seconds before retry...")
+                        time.sleep(2)
+                    else:
+                        print(f"  Max retries reached for {full_name}")
+                        error_count += 1
+                        errors_detail.append({
+                            'row': idx + 1,
+                            'reason': f'API Timeout after {max_retries} retries: {error_msg}',
+                            'fields': {
+                                'First Name': first_name,
+                                'Last Name': last_name,
+                                'Email': email
+                            },
+                            'row_data': row
+                        })
+                else:
+                    # For non-timeout errors, don't retry
+                    print(f"  Non-timeout error, not retrying: {error_msg}")
+                    error_count += 1
+                    errors_detail.append({
+                        'row': idx + 1,
+                        'reason': f'Exception: {error_msg}',
+                        'fields': {
+                            'First Name': first_name,
+                            'Last Name': last_name,
+                            'Email': email
+                        },
+                        'row_data': row
+                    })
+                    break
+        
+        # Add a small delay between API calls to avoid rate limiting
+        if success:
+            time.sleep(0.1)  # 100ms delay between successful imports
+        
         leads_processed += 1
+    # Ensure we don't go beyond the total number of leads
+    next_start = start + leads_processed
+    if next_start >= total_leads:
+        next_start = None
+    
     response_data = {
         'imported': imported_count,
         'skipped': skipped_count,
@@ -1513,9 +1558,12 @@ def import_chunk():
         'start': start,
         'count': leads_processed,
         'total': total_leads,
-        'next_start': start + leads_processed if (start + leads_processed) < total_leads else None,
-        'errors_detail': errors_detail
+        'next_start': next_start,
+        'errors_detail': errors_detail,
+        'processed_total': leads_processed  # Total leads processed in this chunk (successful + failed)
     }
+    print(f"Chunk summary: imported={imported_count}, skipped={skipped_count}, errors={error_count}, processed={leads_processed}")
+    print(f"Next start: {next_start}, Total leads: {total_leads}")
     print(f"Returning response: {response_data}")
     return jsonify(response_data)
 
