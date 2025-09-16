@@ -14,19 +14,11 @@ primary_region = 'sin'
   cpu_kind = 'shared'
   cpus = 1
 
-[[services]]
-  protocol = 'tcp'
+[http_service]
   internal_port = 5000
+  force_https = true
 
-  [[services.ports]]
-    port = 80
-    handlers = ['http']
-
-  [[services.ports]]
-    port = 443
-    handlers = ['http', 'tls']
-
-  [services.http_checks]
+  [[http_service.checks]]
     interval = '30s'
     timeout = '10s'
     grace_period = '10s'
