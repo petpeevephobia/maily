@@ -1,50 +1,49 @@
-# flyctl launch added from .gitignore
 # Environment variables
-**\.env
-**\.env.*
-!**\.env.example
+**/.env
+**/.env.*
+!**/.env.example
 
 # Python
-**\__pycache__
-**\*.py[cod]
-**\*$py.class
-**\*.so
-**\.Python
-**\build
-**\develop-eggs
-**\dist
-**\downloads
-**\eggs
-**\.eggs
-**\lib
-**\lib64
-**\parts
-**\sdist
-**\var
-**\wheels
-**\*.egg-info
-**\.installed.cfg
-**\*.egg
+**/__pycache__
+**/*.py[cod]
+**/*$py.class
+**/*.so
+**/.Python
+**/build
+**/develop-eggs
+**/dist
+**/downloads
+**/eggs
+**/.eggs
+**/lib
+**/lib64
+**/parts
+**/sdist
+**/var
+**/wheels
+**/*.egg-info
+**/.installed.cfg
+**/*.egg
 
 # Virtual Environment
-**\venv
-**\env
-**\ENV
+**/venv
+**/env
+**/ENV
 
 # IDE
-**\.idea
-**\.vscode
-**\*.swp
-**\*.swo
+**/.idea
+**/.vscode
+**/*.swp
+**/*.swo
 
 # Logs
-**\*.log
+**/*.log
 
 # OAuth
-**\client_secrets.json
-**\credentials.json
-**\token.json
-**\config.json
+**/client_secrets.json
+**/credentials.json
+**/token.json
+**/config.json
 
-# ... existing code ... 
+# Fly.io
 fly.toml
